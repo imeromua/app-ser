@@ -7,7 +7,8 @@
 from flask import Flask, request, render_template_string, send_file, session
 from werkzeug.utils import secure_filename
 import pandas as pd
-import re, io, os, secrets, logging
+import re, io, os, secrets, logging, json, uuid, time, tempfile
+from pathlib import Path
 from openpyxl.styles import PatternFill, Font, Alignment
 from openpyxl.utils import get_column_letter
 
@@ -16,6 +17,46 @@ logging.basicConfig(level=logging.WARNING)
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
 app.secret_key = os.environ.get('SECRET_KEY') or secrets.token_hex(32)
+
+# ── Server-side session helpers ───────────────────────────────────────────────
+TMP_DIR = Path(tempfile.gettempdir()) / 'app_ser_sessions'
+TMP_DIR.mkdir(exist_ok=True)
+
+def save_session_data(data: dict) -> str:
+    """Save data to a temp file and return a session_id UUID."""
+    session_id = str(uuid.uuid4())
+    path = TMP_DIR / f"{session_id}.json"
+    path.write_text(json.dumps(data, default=str, ensure_ascii=False))
+    path.chmod(0o600)
+    return session_id
+
+def load_session_data(session_id: str) -> dict | None:
+    """Load data from a temp file by session_id."""
+    if not session_id:
+        return None
+    # Validate UUID format to prevent path traversal
+    try:
+        uuid.UUID(session_id)
+    except ValueError:
+        return None
+    path = TMP_DIR / f"{session_id}.json"
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError) as e:
+        logging.warning(f"Failed to load session file {path}: {e}")
+        return None
+
+def cleanup_old_sessions(max_age_hours: int = 2) -> None:
+    """Remove session temp files older than max_age_hours."""
+    now = time.time()
+    for f in TMP_DIR.glob('*.json'):
+        try:
+            if now - f.stat().st_mtime > max_age_hours * 3600:
+                f.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 # ─────────────────────────────────────────
 DOC_PREFIXES = ('ПрВ', 'Кнк', 'СпП', 'СпО', 'ПрИ', 'Апс')
@@ -463,11 +504,15 @@ def upload():
         header = first_header or {}
         rows, grand = build_rows(combined_df, all_prices)
 
-        # Store serialisable data in session
-        session['header'] = header
-        session['rows'] = rows
-        session['grand'] = grand
-        session['download_name'] = first_safe_name
+        # Store data in a server-side temp file; only keep UUID in cookie
+        session_id = save_session_data({
+            'header': header,
+            'rows': rows,
+            'grand': grand,
+            'filename': first_safe_name,
+        })
+        session['sid'] = session_id
+        cleanup_old_sessions()
 
         art_count = len(set(r['Артикул'] for r in rows if r.get('type') == 'subtotal'))
         row_count = sum(1 for r in rows if r.get('type') == 'data')
@@ -479,12 +524,14 @@ def upload():
 
 @app.route('/download')
 def download():
-    header = session.get('header')
-    rows   = session.get('rows')
-    grand  = session.get('grand')
-    if header is None or rows is None or grand is None:
-        return 'Немає даних', 400
-    download_name = session.get('download_name', 'ruh_tovariv_звіт.xlsx')
+    sid = session.get('sid')
+    data = load_session_data(sid)
+    if not data:
+        return 'Немає даних або сесія застаріла', 400
+    header = data['header']
+    rows   = data['rows']
+    grand  = data['grand']
+    download_name = data.get('filename', 'ruh_tovariv_звіт.xlsx')
     buf = export_excel(header, rows, grand)
     return send_file(buf, as_attachment=True,
                      download_name=download_name,
