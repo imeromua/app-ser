@@ -232,12 +232,11 @@ def export_pdf_result(task_id):
     if not pdf_path or not os.path.isfile(pdf_path):
         return jsonify({'error': 'Файл не знайдено'}), 404
 
-    # Encode filename per RFC 6266 to handle Cyrillic and special characters safely
+    # RFC 6266: filename*=UTF-8'' is sufficient; omit filename= to avoid
+    # gunicorn rejecting headers with raw non-ASCII characters.
     from urllib.parse import quote
     encoded_name = quote(pdf_name, safe='')
-    content_disposition = (
-        f"attachment; filename=\"{pdf_name}\"; filename*=UTF-8''{encoded_name}"
-    )
+    content_disposition = f"attachment; filename*=UTF-8''{encoded_name}"
 
     def stream_and_delete():
         try:
