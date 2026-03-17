@@ -1,209 +1,235 @@
 """
-parser.py — парсинг XLS-файлів звіту EPI.
+parser.py — парсинг XLS/XLSX-файлів звіту EPI.
 
-Підтримує .xls та .xlsx, стійкий до зсуву колонок.
-Динамічно визначає колонки Прихід/Розхід/Інв за шапкою.
+Ця версія використовує "універсальний сканер": замість жорсткої прив'язки 
+до номерів колонок (які можуть зміщуватися залежно від формату вивантаження), 
+парсер шукає числа у відповідних зонах рядка і самостійно визначає, 
+що це за операція, спираючись виключно на назву документа.
 """
 
 import logging
 import re
-
 import pandas as pd
 
-# Типи документів, що розпізнаються (підрядкове входження)
-_DOC_KEYWORDS = ('Кнк', 'СпО', 'СпП', 'ПрВ', 'ПрИ', 'Апк', 'Апс', 'Ппт')
-
-# X016 — код типу Ппт, що означає розхідне (видаткове) переміщення між складами
-_PPT_ROZKHID_CODE = 'Ппт/X016'
-
-_MAX_HEADER_SEARCH_ROWS = 50   # верхня межа рядків для пошуку шапки
-
+# Дозволені сигнатури файлів (захист від завантаження не Excel файлів)
 ALLOWED_MIME_HEADERS = (
-    b'\xd0\xcf\x11\xe0',  # .xls  (OLE2)
-    b'PK\x03\x04',        # .xlsx (ZIP/OOXML)
+    b'\xd0\xcf\x11\xe0',  # .xls  (OLE2 - старий формат)
+    b'PK\x03\x04',        # .xlsx (ZIP/OOXML - новий формат)
 )
 
-
 def is_article_code(val):
+    """Перевіряє, чи є значення валідним артикулом (лише цифри, від 5 знаків)."""
     s = str(val).strip()
     return s.isdigit() and len(s) >= 5
 
+def _classify_and_route(doc_text: str, raw_qty: float):
+    """
+    Головний мозок маршрутизації кількості.
+    Аналізує текст документа і вирішує, куди записати знайдену кількість:
+    у Прихід (плюс), Розхід (мінус) чи Інвентаризацію (корегування).
+    """
+    abs_qty = abs(raw_qty)
+    op = 'Інше'
+    pryhid_val, rozkhid_val, inv_val = 0.0, 0.0, 0.0
 
-def _classify_operation(doc_text: str):
-    """
-    Розпізнає тип операції за підрядком у назві документа.
-    Порядок перевірки важливий: перший збіг виграє.
-    Повертає (canonical_op, display_op) або None якщо не розпізнано.
-    """
-    if 'Кнк' in doc_text:
-        return 'Кнк (Продаж)'
-    if 'СпО' in doc_text or 'СпП' in doc_text:
-        return 'СпП (Списання)'
-    if 'ПрВ' in doc_text:
-        return 'ПрВ (Прихід)'
-    if 'ПрИ' in doc_text:
-        return 'ПрИ (Переміщення)'
-    if 'Апк' in doc_text or 'Апс' in doc_text:
-        return 'Апк (Корегування)'
+    # Перевіряємо ключові слова у назві документа
     if 'Ппт' in doc_text:
-        # Ппт/X016 — видаткове переміщення (товар іде зі складу)
-        if _PPT_ROZKHID_CODE in doc_text:
-            return 'Ппт (Переміщення Розхід)'
-        return 'Ппт (Переміщення Прихід)'
-    return None
+        # Якщо в документі є наш код складу (X016) — це ми віддаємо (Розхід)
+        if 'Ппт/X016' in doc_text:
+            op = 'Ппт (Переміщення Розхід)'
+            rozkhid_val = abs_qty
+        # Якщо інший код — це нам привезли (Прихід)
+        else:
+            op = 'Ппт (Переміщення Прихід)'
+            pryhid_val = abs_qty
+    elif 'Кнк' in doc_text:
+        op = 'Кнк (Продаж)'
+        rozkhid_val = abs_qty
+    elif 'СпО' in doc_text or 'СпП' in doc_text:
+        op = 'СпП (Списання)'
+        rozkhid_val = abs_qty
+    elif 'Апк' in doc_text or 'Апс' in doc_text:
+        op = 'Апк (Корегування)'
+        inv_val = raw_qty  # Тут зберігаємо оригінальний знак (+ або -)
+    elif 'ПрИ' in doc_text:
+        op = 'ПрИ (Переміщення)'
+        rozkhid_val = abs_qty
+    elif 'ПрВ' in doc_text:
+        op = 'ПрВ (Прихід)'
+        pryhid_val = abs_qty
+    else:
+        # Резервне правило: якщо документ не розпізнано, дивимось на знак числа
+        if raw_qty > 0: 
+            pryhid_val = raw_qty
+        else: 
+            rozkhid_val = abs_qty
 
-
-def _find_financial_cols(df):
-    """
-    Шукає рядок з шапкою, де є 'Прихід' та 'Розхід'.
-    Повертає (header_row_idx, pryhid_col, rozkhid_col, inv_col).
-    Якщо шапка не знайдена — повертає (None, None, None, None).
-    """
-    for i in range(0, min(_MAX_HEADER_SEARCH_ROWS, len(df))):
-        row_str = ' '.join(str(v).strip() for v in df.iloc[i] if pd.notna(v))
-        if 'Прихід' in row_str and 'Розхід' in row_str:
-            pryhid_col = rozkhid_col = inv_col = None
-            for j, v in enumerate(df.iloc[i]):
-                s = str(v).strip() if pd.notna(v) else ''
-                if 'Прихід' in s and pryhid_col is None:
-                    pryhid_col = j
-                elif 'Розхід' in s and rozkhid_col is None:
-                    rozkhid_col = j
-                elif 'Інв' in s and inv_col is None:
-                    inv_col = j
-            if pryhid_col is not None and rozkhid_col is not None:
-                return i, pryhid_col, rozkhid_col, inv_col
-    return None, None, None, None
-
-
-def find_data_start(df, after_row=0):
-    """Знаходить перший рядок з маркером '+' та артикулом після after_row."""
-    for i in range(max(after_row, 5), min(after_row + _MAX_HEADER_SEARCH_ROWS + 10, len(df))):
-        try:
-            if df.iloc[i, 0] == '+' and is_article_code(str(df.iloc[i, 1]).strip()):
-                return i
-        except Exception:
-            continue
-    return after_row + 15  # fallback
-
+    return op, pryhid_val, rozkhid_val, inv_val
 
 def parse_xls(buf):
-    # ── MIME-type validation via magic bytes ──────────────────────────────
+    # 1. Перевірка формату файлу за магічними байтами
     buf.seek(0)
     header_bytes = buf.read(4)
     if not any(header_bytes.startswith(sig) for sig in ALLOWED_MIME_HEADERS):
         raise ValueError('Невірний тип файлу: дозволено лише .xls та .xlsx')
+    
+    # 2. Читання файлу через pandas (без заголовків, щоб бачити всю структуру)
     buf.seek(0)
     df = pd.read_excel(buf, sheet_name=0, header=None)
 
     def cell(r, c):
+        """Безпечне отримання тексту з клітинки."""
         try:
             v = df.iloc[r, c]
             return str(v).strip() if pd.notna(v) else ''
         except Exception:
             return ''
 
+    # 3. Витягування метаданих (шапка звіту)
+    # Перевіряємо сусідні клітинки на випадок зміщення
     header = {
         'title':     cell(0, 0),
-        'shop':      cell(1, 3),
-        'period':    cell(1, 10),
-        'warehouse': cell(3, 3),
+        'shop':      cell(1, 3) if cell(1, 3) else cell(1, 2),
+        'period':    cell(1, 10) if cell(1, 10) else cell(1, 9),
+        'warehouse': cell(3, 3) if cell(3, 3) else cell(3, 2),
     }
 
-    # ── Динамічний пошук фінансових колонок ──────────────────────────────
-    hdr_row, pryhid_col, rozkhid_col, inv_col = _find_financial_cols(df)
-    data_start = find_data_start(df, after_row=(hdr_row or 0))
-
-    def _get_float(row, col_idx):
-        if col_idx is None:
-            return 0.0
-        try:
-            v = row.iloc[col_idx]
-            return float(v) if pd.notna(v) else 0.0
-        except Exception:
-            return 0.0
-
     data = []
-    i = data_start
+    prices = {}
     cur_art, cur_name = None, ''
     last_date = None
 
-    while i < len(df):
-        row    = df.iloc[i]
-        marker = row.iloc[0] if len(row) > 0 else None
-        col1   = str(row.iloc[1]).strip() if len(row) > 1 and pd.notna(row.iloc[1]) else ''
+    # 4. Пошук першого рядка з даними (там де є '+' і артикул)
+    data_start = 10
+    for i in range(min(50, len(df))):
+        try:
+            if str(df.iloc[i, 0]).strip() == '+' and is_article_code(str(df.iloc[i, 1]).strip()):
+                data_start = i
+                break
+        except Exception:
+            pass
 
-        if marker == '+' and is_article_code(col1):
-            cur_art  = col1
-            cur_name = str(row.iloc[2]).strip() if len(row) > 2 and pd.notna(row.iloc[2]) else ''
+    # 5. Основний цикл обробки рядків
+    i = data_start
+    while i < len(df):
+        row = df.iloc[i]
+        marker = str(row.iloc[0]).strip() if len(row) > 0 and pd.notna(row.iloc[0]) else ''
+        col1 = str(row.iloc[1]).strip() if len(row) > 1 and pd.notna(row.iloc[1]) else ''
+
+        # --- ОБРОБКА РЯДКА АРТИКУЛУ (+) ---
+        if marker == '+':
+            if is_article_code(col1):
+                cur_art = col1
+                cur_name = str(row.iloc[2]).strip() if len(row) > 2 and pd.notna(row.iloc[2]) else ''
+                
+                # Шукаємо ціну: вона завжди є останнім числом у правій частині таблиці
+                # Тому скануємо рядок з кінця до початку (від останньої колонки до 5-ї)
+                for c_idx in range(len(row)-1, 5, -1):
+                    val = row.iloc[c_idx]
+                    if pd.notna(val):
+                        try:
+                            p = float(val)
+                            if p > 0:
+                                prices[cur_art] = p
+                                break  # Знайшли ціну — зупиняємо пошук
+                        except:
+                            pass
             i += 1
             continue
 
+        # --- ОБРОБКА ТЕХНІЧНОГО РЯДКА (-) ---
         if marker == '-':
             if is_article_code(col1):
-                cur_art  = col1
+                cur_art = col1
                 cur_name = str(row.iloc[2]).strip() if len(row) > 2 and pd.notna(row.iloc[2]) else cur_name
                 i += 1
                 continue
 
-            op = _classify_operation(col1) if cur_art else None
-            if op:
-                pryhid_val  = _get_float(row, pryhid_col)
-                rozkhid_val = _get_float(row, rozkhid_col)
-                inv_val     = _get_float(row, inv_col)
-                qty = pryhid_val - rozkhid_val + inv_val
+            # Якщо це просто мінус без артикулу (наприклад, між документами) — пропускаємо
+            if not cur_art:
+                i += 1
+                continue
 
-                # Рядок включаємо навіть без дати, якщо є фінансовий рух
-                if qty == 0 and pryhid_val == 0 and rozkhid_val == 0 and inv_val == 0:
-                    i += 1
-                    continue
+            doc_text = col1
 
-                m = re.search(r'(\d{2}\.\d{2}\.\d{2})', col1)
-                if m:
+            # --- СКЛЕЮВАННЯ ЗДВОЄНИХ ДОКУМЕНТІВ (Lookahead) ---
+            # Іноді система розбиває складний документ (напр. ПрВ/...-Ппт/...) на два рядки.
+            # Ми заглядаємо на 1-2 рядки вперед, щоб знайти "хвіст" документа.
+            for lookahead in range(1, 3):
+                if i + lookahead < len(df):
+                    next_row = df.iloc[i + lookahead]
+                    next_marker = str(next_row.iloc[0]).strip() if len(next_row) > 0 and pd.notna(next_row.iloc[0]) else ''
+                    next_col1 = str(next_row.iloc[1]).strip() if len(next_row) > 1 and pd.notna(next_row.iloc[1]) else ''
+
+                    # Якщо натрапили на новий товар — зупиняємо пошук
+                    if next_marker in ('+', '-'):
+                        break
+
+                    supp_text = ''
+                    if len(next_marker) > 5 and ('/' in next_marker or 'Ппт' in next_marker):
+                        supp_text = next_marker
+                    elif len(next_col1) > 5 and ('/' in next_col1 or 'Ппт' in next_col1):
+                        supp_text = next_col1
+
+                    if supp_text:
+                        # Перевіряємо, чи в наступному рядку немає своїх цифр, 
+                        # щоб випадково не приклеїти іншу повноцінну операцію
+                        n_qty = 0.0
+                        for ci in range(4, min(15, len(next_row))):
+                            v = next_row.iloc[ci]
+                            if pd.notna(v) and str(v).strip() != '':
+                                try: n_qty += float(v)
+                                except: pass
+                        if n_qty == 0:
+                            doc_text += ' ' + supp_text # Склеюємо текст
+
+            # --- УНІВЕРСАЛЬНИЙ ПОШУК КІЛЬКОСТІ ---
+            # Не шукаємо конкретну колонку "Розхід". Просто скануємо всі комірки від 4 до 15.
+            # Оскільки в рядку операції завжди є лише одне значуще число, ми його гарантовано знайдемо.
+            raw_qty = 0.0
+            for col_idx in range(4, min(15, len(row))):
+                v = row.iloc[col_idx]
+                if pd.notna(v) and str(v).strip() != '':
                     try:
-                        last_date = pd.to_datetime(m.group(1), format='%d.%m.%y')
-                    except Exception as e:
-                        logging.warning(f"Рядок {i}: не вдалося розпізнати дату '{m.group(1)}': {e}")
-                d = last_date
-                ym = f"{d.year}-{d.month:02d}" if d is not None else ''
+                        raw_qty += float(v)
+                    except ValueError:
+                        pass
 
-                data.append({
-                    'Артикул':   cur_art,
-                    'Назва':     cur_name,
-                    'Операція':  op,
-                    'Документ':  col1,
-                    'Дата':      d,
-                    'Рік-Місяць': ym,
-                    'Кількість': qty,
-                    'Прихід':    pryhid_val,
-                    'Розхід':    rozkhid_val,
-                })
-        i += 1
+            # Якщо цифр не знайдено — це пустий рядок (можливо текст), пропускаємо
+            if raw_qty == 0:
+                i += 1
+                continue
 
-    # ── Ціни (перший '+'-рядок кожного артикулу) ─────────────────────────
-    # Типова структура: прихід(K-ть) | розхід(K-ть) | інв | прихід(сума) | розхід(сума) | ціна
-    # Тобто ціна зазвичай на 3 позиції правіше від Інв колонки.
-    prices = {}
-    if inv_col is not None:
-        price_col = inv_col + 3
-    elif rozkhid_col is not None:
-        price_col = rozkhid_col + 4
-    else:
-        price_col = 11  # резервна позиція
-    for i2 in range(data_start, len(df)):
-        r2 = df.iloc[i2]
-        if r2.iloc[0] == '+' and is_article_code(str(r2.iloc[1]).strip()):
-            try:
-                p = float(r2.iloc[price_col])
-                if p > 0:
-                    prices[str(r2.iloc[1]).strip()] = p
-            except Exception:
-                # Спробувати стандартну позицію
+            # --- МАРШРУТИЗАЦІЯ ТА ПІДРАХУНОК ---
+            # Віддаємо знайдений текст і кількість нашій функції для класифікації
+            op, pryhid_val, rozkhid_val, inv_val = _classify_and_route(doc_text, raw_qty)
+            
+            # Математична дельта операції: скільки реально додалося чи віднялося
+            qty = pryhid_val - rozkhid_val + inv_val
+
+            # Витягуємо дату з тексту документа
+            m = re.search(r'(\d{2}\.\d{2}\.\d{2})', doc_text)
+            if m:
                 try:
-                    p = float(r2.iloc[11])
-                    if p > 0:
-                        prices[str(r2.iloc[1]).strip()] = p
+                    last_date = pd.to_datetime(m.group(1), format='%d.%m.%y')
                 except Exception:
                     pass
+
+            ym = f"{last_date.year}-{last_date.month:02d}" if last_date else ''
+
+            # Записуємо повністю готову та класифіковану операцію
+            data.append({
+                'Артикул':   cur_art,
+                'Назва':     cur_name,
+                'Операція':  op,
+                'Документ':  doc_text,
+                'Дата':      last_date,
+                'Рік-Місяць': ym,
+                'Кількість': qty,
+                'Прихід':    pryhid_val,
+                'Розхід':    rozkhid_val,
+                'Інв':       inv_val
+            })
+        i += 1
 
     return header, pd.DataFrame(data), prices
