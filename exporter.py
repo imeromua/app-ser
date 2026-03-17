@@ -61,7 +61,9 @@ def export_excel(header, rows, grand, report_type='detail'):
             c = ws.cell(row=HR, column=ci, value=cn)
             c.fill = hfill
             c.font = hfont
-            c.alignment = Alignment(horizontal='center')
+            c.alignment = Alignment(wrap_text=True, horizontal='center', vertical='center')
+
+        ws.row_dimensions[HR].height = 45
 
         dr = HR + 1
         for row in rows:
@@ -78,11 +80,12 @@ def export_excel(header, rows, grand, report_type='detail'):
                     cell.value = val
                 else:
                     try:
-                        float_cols = {'Ціна', 'Сума', 'Прихід', 'Розхід', 'Кількість', 'Залишок'}
-                        cell.value = float(val) if ck in float_cols else int(val)
+                        qty_cols = {'ПрВ', 'Кнк', 'ПрИ', 'СпП', 'Апс', 'Залишок',
+                                    'Прихід', 'Розхід', 'Кількість', 'Ціна', 'Сума'}
+                        cell.value = float(val) if ck in qty_cols else int(val)
                         if ck == 'Сума':
                             cell.number_format = '#,##0.00'
-                        if ck == 'Ціна':
+                        elif ck in qty_cols:
                             cell.number_format = '0.00'
                     except Exception:
                         cell.value = val
@@ -122,6 +125,9 @@ def export_excel(header, rows, grand, report_type='detail'):
                 c.alignment = Alignment(horizontal='right')
             if ci == len(grand_vals) and report_type != 'document':
                 c.number_format = '#,##0.00'
+            elif val not in ('', None) and isinstance(val, (int, float)) and ci > 2:
+                if report_type != 'document' and ci != len(grand_vals):
+                    c.number_format = '0.00'
 
     out.seek(0)
     return out

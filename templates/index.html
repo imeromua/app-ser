@@ -6,55 +6,75 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
   <style>
     body{background:#f0f4f8}
-    .upload-area{border:2.5px dashed #4472C4;border-radius:16px;padding:60px 40px;text-align:center;
+    .upload-area{border:2.5px dashed #4472C4;border-radius:12px;padding:40px 24px;text-align:center;
       cursor:pointer;transition:.25s;background:#fff}
     .upload-area:hover,.upload-area.drag{background:#e8effc;border-color:#1F3864}
-    .upload-icon{font-size:56px}
-    .card-header{background:#1F3864;color:#fff;font-weight:700}
+    .upload-icon{font-size:48px}
+    .upload-card{max-width:500px;margin:0 auto;border-radius:12px!important;
+      box-shadow:0 4px 18px rgba(0,0,0,.12)!important}
+    .upload-card .card-header{background:#1F3864;color:#fff;font-weight:700;border-radius:12px 12px 0 0!important}
+    .info-card{max-width:500px;margin:0 auto;border-radius:12px!important;
+      box-shadow:0 2px 10px rgba(0,0,0,.08)!important;background:#fff;border:none}
+    .info-card .card-body{padding:20px 24px}
+    .info-card h6{color:#1F3864;font-weight:700;font-size:1rem}
+    .feature-item{display:flex;align-items:flex-start;gap:8px;margin-bottom:6px;font-size:.9rem;color:#333}
+    .feature-item .emoji{flex-shrink:0;font-size:1rem}
   </style>
 </head>
 <body>
-<div class="container py-5">
+<div class="container py-4">
   <div class="text-center mb-4">
-    <h2 class="fw-bold text-danger">Рух товарів кількісний</h2>
+    <h2 class="fw-bold text-danger">📦 Рух товарів кількісний</h2>
     <p class="text-muted">Завантажте XLS-файл звіту EPI — отримайте зведену таблицю з підсумками та сумами залишків</p>
   </div>
-  <div class="row justify-content-center">
-    <div class="col-md-6">
-      <div class="card shadow-sm">
-        <div class="card-header">📂 Завантаження файлу</div>
-        <div class="card-body">
-          <form id="form" action="/upload" method="post" enctype="multipart/form-data">
-            <div class="upload-area" id="drop" onclick="document.getElementById('fi').click()">
-              <div class="upload-icon">📊</div>
-              <p class="fs-5 mt-2 mb-1 fw-semibold">Перетягніть XLS-файл сюди</p>
-              <p class="text-muted small">або натисніть щоб обрати</p>
-              <p id="fn" class="text-success fw-semibold mt-2"></p>
-            </div>
-            <input type="file" id="fi" name="files" accept=".xls,.xlsx" class="d-none" multiple>
-            <div class="btn-group w-100 mt-3" role="group">
-              <input type="radio" class="btn-check" name="report_type" id="rt_detail" value="detail" checked>
-              <label class="btn btn-outline-primary" for="rt_detail">
-                📅 Детальний (по місяцях)
-              </label>
-              <input type="radio" class="btn-check" name="report_type" id="rt_summary" value="summary">
-              <label class="btn btn-outline-success" for="rt_summary">
-                📊 Сумарний (без місяців)
-              </label>
-              <input type="radio" class="btn-check" name="report_type" id="rt_document" value="document">
-              <label class="btn btn-outline-warning" for="rt_document">
-                📄 По документах
-              </label>
-            </div>
-            <div id="spin" class="mt-3 text-center d-none">
-              <div class="spinner-border text-primary me-2" role="status"></div>
-              <span>Обробляємо файл...</span>
-            </div>
-            <button type="submit" id="btn" class="btn btn-primary w-100 mt-3" disabled>🔍 Аналізувати</button>
-          </form>
-          {% if error %}<div class="alert alert-danger mt-3">{{ error }}</div>{% endif %}
+
+  <!-- Блок опису системи -->
+  <div class="card info-card mb-4">
+    <div class="card-body">
+      <h6>📊 Про систему аналізу «Рух товарів»</h6>
+      <p class="text-muted small mb-3">Цей інструмент створений для швидкої та автоматизованої обробки звітів у форматах XLS та XLSX.</p>
+      <p class="fw-semibold mb-2" style="font-size:.9rem;color:#1F3864">✨ Що вміє система:</p>
+      <div class="feature-item"><span class="emoji">🗂️</span><span>Розпізнавати та об'єднувати дані з декількох файлів одночасно.</span></div>
+      <div class="feature-item"><span class="emoji">🏷️</span><span>Коректно класифікувати всі типи операцій: прихід (ПрВ), продажі (Кнк), переміщення (ПрИ/Ппт), списання (СпП/СпО) та акти пересорту (Апс/Апк).</span></div>
+      <div class="feature-item"><span class="emoji">🧮</span><span>Автоматично вираховувати точні залишки та фінансові суми.</span></div>
+      <div class="feature-item"><span class="emoji">📑</span><span>Генерувати 3 види звітів: <strong>Детальний</strong> (по місяцях), <strong>Сумарний</strong> (загальний підсумок) та <strong>По документах</strong> (хронологія кожної операції).</span></div>
+      <div class="feature-item"><span class="emoji">💾</span><span>Експортувати результати у готові для друку <strong>PDF-файли</strong> або зручні таблиці <strong>Excel</strong>.</span></div>
+    </div>
+  </div>
+
+  <!-- Форма завантаження -->
+  <div class="card upload-card">
+    <div class="card-header">📂 Завантаження файлу</div>
+    <div class="card-body">
+      <form id="form" action="/upload" method="post" enctype="multipart/form-data">
+        <div class="upload-area" id="drop" onclick="document.getElementById('fi').click()">
+          <div class="upload-icon">📊</div>
+          <p class="fs-5 mt-2 mb-1 fw-semibold">Перетягніть XLS-файл сюди</p>
+          <p class="text-muted small">або натисніть щоб обрати</p>
+          <p id="fn" class="text-success fw-semibold mt-2"></p>
         </div>
-      </div>
+        <input type="file" id="fi" name="files" accept=".xls,.xlsx" class="d-none" multiple>
+        <div class="btn-group w-100 mt-3" role="group">
+          <input type="radio" class="btn-check" name="report_type" id="rt_detail" value="detail" checked>
+          <label class="btn btn-outline-primary" for="rt_detail">
+            📅 Детальний (по місяцях)
+          </label>
+          <input type="radio" class="btn-check" name="report_type" id="rt_summary" value="summary">
+          <label class="btn btn-outline-success" for="rt_summary">
+            📊 Сумарний (без місяців)
+          </label>
+          <input type="radio" class="btn-check" name="report_type" id="rt_document" value="document">
+          <label class="btn btn-outline-warning" for="rt_document">
+            📄 По документах
+          </label>
+        </div>
+        <div id="spin" class="mt-3 text-center d-none">
+          <div class="spinner-border text-primary me-2" role="status"></div>
+          <span>Обробляємо файл...</span>
+        </div>
+        <button type="submit" id="btn" class="btn btn-primary w-100 mt-3" disabled>🔍 Аналізувати</button>
+      </form>
+      {% if error %}<div class="alert alert-danger mt-3">{{ error }}</div>{% endif %}
     </div>
   </div>
 </div>
