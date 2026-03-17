@@ -15,7 +15,12 @@ def is_article_code(val):
     s = str(val).strip()
     return s.isdigit() and len(s) >= 5
 
-def _classify_and_route(doc_text: str, raw_qty: float):
+def _is_empty_text(text: str) -> bool:
+    """Повертає True, якщо текст є відсутнім або порожнім замінником."""
+    return not text or text in ('nan', '-')
+
+def _classify(doc_text: str, raw_qty: float):
+    """Класифікує операцію ВИКЛЮЧНО на основі тексту документа."""
     abs_qty = abs(raw_qty)
     op = 'Інше'
     pryhid_val, rozkhid_val, inv_val = 0.0, 0.0, 0.0
@@ -26,27 +31,27 @@ def _classify_and_route(doc_text: str, raw_qty: float):
     elif 'СпО' in doc_text or 'СпП' in doc_text:
         op = 'СпП (Списання)'
         rozkhid_val = abs_qty
+    elif 'ПрИ' in doc_text:
+        op = 'ПрИ (Переміщення)'
+        rozkhid_val = abs_qty
     elif 'Апк' in doc_text or 'Апс' in doc_text:
         op = 'Апс (Акт пересорту)'
         inv_val = raw_qty
     elif 'ПрВ' in doc_text:
         op = 'ПрВ (Прихід)'
         pryhid_val = abs_qty
-    elif 'ПрИ' in doc_text:
-        op = 'ПрИ (Переміщення)'
-        rozkhid_val = abs_qty
     elif 'Ппт' in doc_text:
-        if 'Ппт/X016' in doc_text:
+        if 'X016' in doc_text:
             op = 'ПрИ (Переміщення)'
             rozkhid_val = abs_qty
         else:
             op = 'ПрВ (Прихід)'
             pryhid_val = abs_qty
     else:
-        if raw_qty > 0: 
+        if raw_qty > 0:
             op = 'ПрВ (Прихід)'
             pryhid_val = abs_qty
-        else: 
+        else:
             op = 'СпП (Списання)'
             rozkhid_val = abs_qty
 
@@ -138,47 +143,63 @@ def parse_xls(buf):
 
             doc_text = col1
 
-            # ТУТ ФІКС: Зшивання розірваних документів (1 рядок вгору і 2 вниз)
-            for offset in (-1, 1, 2):
-                idx = i + offset
-                if 0 <= idx < len(df):
-                    adj_row = df.iloc[idx]
-                    adj_marker = str(adj_row.iloc[0]).strip() if len(adj_row) > 0 and pd.notna(adj_row.iloc[0]) else ''
-                    adj_col1 = str(adj_row.iloc[1]).strip() if len(adj_row) > 1 and pd.notna(adj_row.iloc[1]) else ''
-
-                    if offset > 0 and adj_marker in ('+', '-'): break
-
-                    supp_text = ''
-                    if 'Ппт' in adj_marker or '/' in adj_marker: supp_text = adj_marker
-                    elif 'Ппт' in adj_col1 or '/' in adj_col1: supp_text = adj_col1
-
-                    if supp_text and len(supp_text) > 5:
-                        has_numbers = False
-                        for ci in range(4, min(15, len(adj_row))):
-                            v = adj_row.iloc[ci]
-                            if pd.notna(v) and str(v).strip() != '':
-                                try: 
-                                    float(v)
-                                    has_numbers = True
-                                    break
-                                except: pass
-                        
-                        if not has_numbers:
-                            if offset < 0: doc_text = supp_text + ' ' + doc_text
-                            else: doc_text = doc_text + ' ' + supp_text
-
+            # Збір raw_qty: перше знайдене число в клітинках 4–14
             raw_qty = 0.0
             for col_idx in range(4, min(15, len(row))):
                 v = row.iloc[col_idx]
                 if pd.notna(v) and str(v).strip() != '':
-                    try: raw_qty += float(v)
-                    except ValueError: pass
+                    try:
+                        raw_qty = float(v)
+                        break
+                    except ValueError:
+                        pass
+
+            # Зшивання: якщо поточний рядок не має цифр або не має тексту документа,
+            # заглядаємо на 1 рядок вгору та на 2 вниз
+            if raw_qty == 0.0 or _is_empty_text(doc_text):
+                for offset in (-1, 1, 2):
+                    idx = i + offset
+                    if not (0 <= idx < len(df)):
+                        continue
+                    adj_row = df.iloc[idx]
+                    adj_marker = str(adj_row.iloc[0]).strip() if len(adj_row) > 0 and pd.notna(adj_row.iloc[0]) else ''
+                    adj_col1 = str(adj_row.iloc[1]).strip() if len(adj_row) > 1 and pd.notna(adj_row.iloc[1]) else ''
+
+                    # Не перетинаємо межу нового товару або операції
+                    if offset > 0 and adj_marker in ('+', '-') and is_article_code(adj_col1):
+                        break
+
+                    # Шукаємо цифри в сусідньому рядку
+                    adj_qty = 0.0
+                    for ci in range(4, min(15, len(adj_row))):
+                        v = adj_row.iloc[ci]
+                        if pd.notna(v) and str(v).strip() != '':
+                            try:
+                                adj_qty = float(v)
+                                break
+                            except ValueError:
+                                pass
+
+                    # Намагаємось склеїти текст
+                    adj_text = adj_col1 if not _is_empty_text(adj_col1) and adj_col1 != '+' else ''
+                    if not adj_text and adj_marker not in ('nan', '-', '+', ''):
+                        adj_text = adj_marker
+
+                    if raw_qty == 0.0 and adj_qty != 0.0:
+                        raw_qty = adj_qty
+                        if adj_text and _is_empty_text(doc_text):
+                            doc_text = adj_text
+                        elif adj_text:
+                            doc_text = (adj_text + ' ' + doc_text) if offset < 0 else (doc_text + ' ' + adj_text)
+                        break
+                    elif adj_text and _is_empty_text(doc_text):
+                        doc_text = adj_text
 
             if raw_qty == 0:
                 i += 1
                 continue
 
-            op, pryhid_val, rozkhid_val, inv_val = _classify_and_route(doc_text, raw_qty)
+            op, pryhid_val, rozkhid_val, inv_val = _classify(doc_text, raw_qty)
             qty = pryhid_val - rozkhid_val + inv_val
 
             m = re.search(r'(\d{2}\.\d{2}\.\d{2})', doc_text)
