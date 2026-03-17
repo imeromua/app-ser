@@ -9,14 +9,14 @@ import logging
 import os
 import secrets
 
-from flask import Flask, request, render_template, send_file, session
+from flask import Flask, request, render_template, send_file, session, Response
 from werkzeug.utils import secure_filename
 import pandas as pd
 
 from categories import detect_category
 from session_store import save_session_data, load_session_data, cleanup_old_sessions
 from parser import parse_xls
-from builder import build_rows, build_summary_rows
+from builder import build_rows, build_summary_rows, build_document_rows
 from exporter import export_excel
 
 logging.basicConfig(level=logging.WARNING)
@@ -56,23 +56,32 @@ def upload():
 
         if report_type == 'summary':
             rows, grand = build_summary_rows(combined_df, all_prices)
+        elif report_type == 'document':
+            rows, grand = build_document_rows(combined_df, all_prices)
         else:
             rows, grand = build_rows(combined_df, all_prices)
 
-        all_names = [r['Назва'] for r in rows if r.get('type') in ('data', 'summary')]
+        if report_type == 'document':
+            all_names = [r['Назва'] for r in rows if r.get('type') == 'doc_data']
+            art_count = len(set(r['Артикул'] for r in rows if r.get('type') == 'doc_data'))
+            row_count = sum(1 for r in rows if r.get('type') == 'doc_data')
+        else:
+            all_names = [r['Назва'] for r in rows if r.get('type') in ('data', 'summary')]
+            art_count = len(set(
+                r['Артикул'] for r in rows
+                if r.get('type') in ('subtotal', 'summary')
+            ))
+            row_count = sum(1 for r in rows if r.get('type') in ('data', 'summary'))
+
         category = detect_category(all_names)
         safe_category = category.replace('/', '-').replace(' ', '_')
 
         if report_type == 'summary':
             download_name = f"{safe_category}_сумарний_звіт.xlsx"
+        elif report_type == 'document':
+            download_name = f"{safe_category}_по_документах.xlsx"
         else:
             download_name = f"{safe_category}_детальний_звіт.xlsx"
-
-        art_count = len(set(
-            r['Артикул'] for r in rows
-            if r.get('type') in ('subtotal', 'summary')
-        ))
-        row_count = sum(1 for r in rows if r.get('type') in ('data', 'summary'))
 
         # Store data in a server-side temp file; only keep UUID in cookie
         session_id = save_session_data({
@@ -91,7 +100,8 @@ def upload():
                                art_count=art_count, row_count=row_count,
                                category=category, report_type=report_type)
     except Exception as e:
-        return render_template('index.html', error=f'Помилка: {e}')
+        logging.exception('Error processing uploaded file')
+        return render_template('index.html', error=f'Помилка обробки файлу: {e}')
 
 
 @app.route('/download')
@@ -109,6 +119,42 @@ def download():
     return send_file(buf, as_attachment=True,
                      download_name=download_name,
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+
+@app.route('/download_pdf')
+def download_pdf():
+    try:
+        from weasyprint import HTML
+    except ImportError:
+        return 'WeasyPrint не встановлено. Виконайте: pip install weasyprint', 500
+
+    sid = session.get('sid')
+    data = load_session_data(sid)
+    if not data:
+        return 'Немає даних або сесія застаріла', 400
+
+    header      = data['header']
+    rows        = data['rows']
+    grand       = data['grand']
+    report_type = data.get('report_type', 'detail')
+    category    = data.get('category', '')
+
+    html_content = render_template(
+        'report_pdf.html',
+        header=header,
+        rows=rows,
+        grand=grand,
+        report_type=report_type,
+        category=category,
+    )
+    pdf_bytes = HTML(string=html_content).write_pdf()
+    pdf_name  = data.get('filename', 'звіт').replace('.xlsx', '.pdf')
+
+    return Response(
+        pdf_bytes,
+        mimetype='application/pdf',
+        headers={'Content-Disposition': f'attachment; filename="{pdf_name}"'},
+    )
 
 
 if __name__ == '__main__':

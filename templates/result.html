@@ -24,6 +24,7 @@
     table{border-collapse:collapse!important}
     td,th{border:1px solid #dee2e6!important}
     tr.data-row:hover td{background:#f8f9fa!important}
+    .doc-name{font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .btn-home{font-size:.95rem;font-weight:600;padding:8px 20px;border-radius:8px}
   </style>
 </head>
@@ -43,6 +44,8 @@
       <span class="badge" style="background:#27ae60;font-size:.9rem">📦 {{ category }}</span>
       {% if report_type == 'summary' %}
       <span class="badge bg-success ms-1" style="font-size:.9rem">📊 Сумарний звіт</span>
+      {% elif report_type == 'document' %}
+      <span class="badge bg-warning text-dark ms-1" style="font-size:.9rem">📄 Звіт по документах</span>
       {% else %}
       <span class="badge bg-primary ms-1" style="font-size:.9rem">📅 Детальний звіт</span>
       {% endif %}
@@ -55,6 +58,14 @@
   </div>
 
   <div class="row g-3 mb-3">
+    {% if report_type == 'document' %}
+    {% set cards = [
+      ('Прихід, шт', grand.Прихід|int, '#1F3864'),
+      ('Розхід, шт', grand.Розхід|int, '#c0392b'),
+      ('Залишок, шт', grand.Залишок, '#27ae60'),
+      ('Кількість артикулів', art_count, '#16a085'),
+    ] %}
+    {% else %}
     {% set cards = [
       ('ПрВ (прихід)', grand.ПрВ, '#1F3864'),
       ('Кнк (продажі)', grand.Кнк, '#c0392b'),
@@ -64,6 +75,7 @@
       ('Сума залишків, грн', grand.Сума|int, '#8e44ad'),
       ('Кількість артикулів', art_count, '#16a085'),
     ] %}
+    {% endif %}
     {% for lbl,val,clr in cards %}
     <div class="col-6 col-md-2">
       <div class="stat-card shadow-sm" style="background:{{clr}}">
@@ -77,6 +89,7 @@
   <div class="toolbar d-flex gap-2 align-items-center flex-wrap shadow-sm">
     <a href="/" class="btn btn-outline-secondary btn-sm">← Новий файл</a>
     <a href="/download" class="btn btn-success btn-sm">⬇ Завантажити Excel</a>
+    <a href="/download_pdf" class="btn btn-danger btn-sm">📄 Завантажити PDF</a>
     <span class="text-muted small ms-2">{{ row_count }} рядків | {{ art_count }} артикулів</span>
     <input id="srch" type="text" class="form-control form-control-sm ms-auto"
            style="max-width:260px" placeholder="🔍 Пошук по таблиці...">
@@ -86,6 +99,13 @@
     <div class="card-body p-0">
       <table class="table table-sm table-bordered mb-0 w-100" id="tbl">
         <thead>
+          {% if report_type == 'document' %}
+          <tr>
+            <th>Артикул</th><th>Назва товару</th>
+            <th>Дата</th><th>Тип операції</th><th>Документ</th>
+            <th>Прихід</th><th>Розхід</th><th>Кількість</th><th>Залишок</th>
+          </tr>
+          {% else %}
           <tr>
             <th>Артикул</th><th>Назва товару</th>
             {% if report_type != 'summary' %}<th>Місяць</th>{% endif %}
@@ -93,8 +113,28 @@
             <th>СпП (списання)</th><th>Апс (акт пересорту)</th>
             <th>Залишок</th><th>Ціна</th><th>Сума, грн</th>
           </tr>
+          {% endif %}
         </thead>
         <tbody>
+        {% if report_type == 'document' %}
+          {% for row in rows %}
+            {% if row.type == 'spacer' %}
+              <tr class="spacer"><td colspan="9"></td></tr>
+            {% elif row.type == 'doc_data' %}
+              <tr class="data-row">
+                <td>{{ row.Артикул }}</td>
+                <td title="{{ row.Назва }}">{{ row.Назва[:55] }}{{ '…' if row.Назва|length > 55 else '' }}</td>
+                <td class="ctr">{{ row.Дата }}</td>
+                <td>{{ row.Операція }}</td>
+                <td title="{{ row.Документ }}" class="doc-name">{{ row.Документ[:60] }}</td>
+                <td class="num">{{ row.Прихід if row.Прихід != '' else '' }}</td>
+                <td class="num">{{ row.Розхід if row.Розхід != '' else '' }}</td>
+                <td class="num">{{ row.Кількість }}</td>
+                <td class="num fw-bold">{{ row.Залишок }}</td>
+              </tr>
+            {% endif %}
+          {% endfor %}
+        {% else %}
         {% for row in rows %}
           {% if row.type == 'spacer' %}
             <tr class="spacer"><td colspan="11"></td></tr>
@@ -140,6 +180,7 @@
             </tr>
           {% endif %}
         {% endfor %}
+        {% endif %}
         </tbody>
       </table>
     </div>

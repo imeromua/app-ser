@@ -1,5 +1,5 @@
 """
-exporter.py — експорт у Excel для детального та сумарного звітів.
+exporter.py — експорт у Excel для детального, сумарного та документального звітів.
 """
 
 import io
@@ -12,8 +12,9 @@ import pandas as pd
 def export_excel(header, rows, grand, report_type='detail'):
     """
     Експортує дані у Excel.
-    report_type='detail'  — детальний звіт (з колонкою Місяць)
-    report_type='summary' — сумарний звіт (без колонки Місяць)
+    report_type='detail'   — детальний звіт (з колонкою Місяць)
+    report_type='summary'  — сумарний звіт (без колонки Місяць)
+    report_type='document' — звіт по документах (Дата, Тип операції, ...)
     """
     out = io.BytesIO()
 
@@ -24,6 +25,12 @@ def export_excel(header, rows, grand, report_type='detail'):
         col_keys = ['Артикул', 'Назва', 'ПрВ', 'Кнк', 'ПрИ', 'СпП', 'Апс',
                     'Залишок', 'Ціна', 'Сума']
         col_widths = [12, 42, 10, 10, 14, 13, 16, 10, 10, 13]
+    elif report_type == 'document':
+        cols     = ['Артикул', 'Назва', 'Дата', 'Тип операції', 'Документ',
+                    'Прихід', 'Розхід', 'Кількість', 'Залишок']
+        col_keys = ['Артикул', 'Назва', 'Дата', 'Операція', 'Документ',
+                    'Прихід', 'Розхід', 'Кількість', 'Залишок']
+        col_widths = [12, 42, 12, 22, 48, 10, 10, 10, 10]
     else:
         cols     = ['Артикул', 'Назва', 'Місяць', 'ПрВ (прихід)', 'Кнк (продажі)',
                     'ПрИ (переміщення)', 'СпП (списання)', 'Апс (акт пересорту)',
@@ -71,7 +78,8 @@ def export_excel(header, rows, grand, report_type='detail'):
                     cell.value = val
                 else:
                     try:
-                        cell.value = float(val) if ck in ('Ціна', 'Сума') else int(val)
+                        float_cols = {'Ціна', 'Сума', 'Прихід', 'Розхід', 'Кількість', 'Залишок'}
+                        cell.value = float(val) if ck in float_cols else int(val)
                         if ck == 'Сума':
                             cell.number_format = '#,##0.00'
                         if ck == 'Ціна':
@@ -97,6 +105,10 @@ def export_excel(header, rows, grand, report_type='detail'):
             grand_vals = ['', 'ВСЬОГО', grand['ПрВ'], grand['Кнк'],
                           grand['ПрИ'], grand['СпП'], grand['Апс'],
                           grand['Залишок'], '', grand['Сума']]
+        elif report_type == 'document':
+            grand_vals = ['', 'ВСЬОГО', '', '', '',
+                          grand.get('Прихід', ''), grand.get('Розхід', ''),
+                          '', grand.get('Залишок', '')]
         else:
             grand_vals = ['', 'ВСЬОГО', '', grand['ПрВ'], grand['Кнк'],
                           grand['ПрИ'], grand['СпП'], grand['Апс'],
@@ -108,7 +120,7 @@ def export_excel(header, rows, grand, report_type='detail'):
             c.font = gfont
             if ci > 2:
                 c.alignment = Alignment(horizontal='right')
-            if ci == len(grand_vals):
+            if ci == len(grand_vals) and report_type != 'document':
                 c.number_format = '#,##0.00'
 
     out.seek(0)
