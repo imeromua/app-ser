@@ -28,7 +28,7 @@ ALLOWED_MIME_HEADERS = (
 
 def is_article_code(val):
     s = str(val).strip()
-    return s.isdigit() and len(s) >= 5
+    return s.isdigit() and len(s) == 8
 
 
 def _is_own_shop(doc_text: str) -> bool:
@@ -104,6 +104,10 @@ def find_data_start(df, after_row=0):
                 return i
         except Exception:
             continue
+    logging.warning(
+        "find_data_start: маркер '+' не знайдено після рядка %d, використовується fallback after_row+15=%d",
+        after_row, after_row + 15,
+    )
     return after_row + 15
 
 
@@ -234,6 +238,9 @@ def parse_xls(buf):
     elif rozkhid_col is not None:
         price_col = rozkhid_col + 4
     else:
+        logging.warning(
+            "parse_xls: не вдалося визначити колонку ціни динамічно, використовується fallback price_col=11"
+        )
         price_col = 11
     for i2 in range(data_start, len(df)):
         r2 = df.iloc[i2]
