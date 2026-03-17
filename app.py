@@ -11,6 +11,10 @@ import secrets
 import threading
 import uuid
 
+import openpyxl
+from openpyxl.styles import Font as XlFont, Alignment as XlAlign
+from openpyxl.utils import get_column_letter
+
 from celery.result import AsyncResult
 from flask import Flask, request, render_template, send_file, session, jsonify, Response as FlaskResponse
 from werkzeug.utils import secure_filename
@@ -122,6 +126,76 @@ def download():
     buf = export_excel(header, rows, grand, report_type=report_type)
     return send_file(buf, as_attachment=True,
                      download_name=download_name,
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+
+@app.route('/download_inventory')
+def download_inventory():
+    sid = session.get('sid')
+    data = load_session_data(sid)
+    if not data:
+        return 'Немає даних або сесія застаріла', 400
+
+    rows = data.get('rows', [])
+    report_type = data.get('report_type', 'detail')
+    category = data.get('category', 'товари')
+    safe_category = category.replace('/', '-').replace(' ', '_')
+
+    # Select the rows that represent one summary entry per article
+    if report_type == 'document':
+        # Last doc_data row per article carries the final running balance
+        article_map: dict = {}
+        for r in rows:
+            if r.get('type') == 'doc_data':
+                article_map[r['Артикул']] = r
+        inv_rows = list(article_map.values())
+    else:
+        # subtotal rows (detail) and summary rows (summary) are already one per article
+        inv_rows = [r for r in rows if r.get('type') in ('subtotal', 'summary')]
+
+    if not inv_rows:
+        return 'Немає даних для відомості інвентаризації', 400
+
+    # Sort alphabetically by name, case-insensitive
+    inv_rows.sort(key=lambda r: r.get('Назва', '').lower())
+
+    # Build xlsx with openpyxl
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = 'Інвентаризація'
+
+    headers = ['№', 'Артикул', 'Назва', 'Залишок', 'Фактичний залишок']
+    col_widths = [5, 12, 50, 14, 20]
+
+    for ci, h in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=ci, value=h)
+        cell.font = XlFont(bold=True)
+        cell.alignment = XlAlign(horizontal='center', vertical='center')
+
+    for ci, w in enumerate(col_widths, 1):
+        ws.column_dimensions[get_column_letter(ci)].width = w
+
+    for i, r in enumerate(inv_rows, 1):
+        ws.cell(row=i + 1, column=1, value=i)
+        ws.cell(row=i + 1, column=2, value=r.get('Артикул', ''))
+        ws.cell(row=i + 1, column=3, value=r.get('Назва', ''))
+        zal = r.get('Залишок', '')
+        zal_cell = ws.cell(row=i + 1, column=4)
+        if zal != '' and zal is not None:
+            try:
+                zal_cell.value = float(zal)
+                zal_cell.number_format = '0.##'
+            except (ValueError, TypeError):
+                zal_cell.value = zal
+        # column 5 (Фактичний залишок) — left empty for manual entry
+
+    out = io.BytesIO()
+    wb.save(out)
+    out.seek(0)
+
+    filename = f'{safe_category}_інвентаризація.xlsx'
+    return send_file(out, as_attachment=True,
+                     download_name=filename,
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
