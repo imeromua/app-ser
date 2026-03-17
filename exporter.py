@@ -101,6 +101,9 @@ def export_excel(header, rows, grand, report_type='detail'):
         ws.freeze_panes = f'A{HR + 1}'
 
         # ── Grand Total row ───────────────────────────────────────────────
+        # Значення grand беруться напряму з builder.py без жодного abs():
+        #   ПрВ, Кнк, СпП — вже abs() з _agg_cols()
+        #   ПрИ, Апс       — знакові суми (від'ємне значення зберігається)
         gfill = PatternFill(start_color='1F3864', end_color='1F3864', fill_type='solid')
         gfont = Font(bold=True, color='FFFFFF', size=12)
 
