@@ -150,10 +150,15 @@ def download_pdf():
     pdf_bytes = HTML(string=html_content).write_pdf()
     pdf_name  = data.get('filename', 'звіт').replace('.xlsx', '.pdf')
 
-    return Response(
-        pdf_bytes,
-        mimetype='application/pdf',
-        headers={'Content-Disposition': f'attachment; filename="{pdf_name}"'},
+    # ВИПРАВЛЕННЯ: Використовуємо io.BytesIO та send_file для коректної обробки кирилиці
+    pdf_io = io.BytesIO(pdf_bytes)
+    pdf_io.seek(0)
+
+    return send_file(
+        pdf_io, 
+        as_attachment=True,
+        download_name=pdf_name,
+        mimetype='application/pdf'
     )
 
 
