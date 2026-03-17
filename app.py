@@ -183,8 +183,12 @@ def download_inventory():
         zal_cell = ws.cell(row=i + 1, column=4)
         if zal != '' and zal is not None:
             try:
-                zal_cell.value = float(zal)
-                zal_cell.number_format = '0.##'
+                fval = float(zal)
+                if fval.is_integer():
+                    zal_cell.value = int(fval)
+                else:
+                    zal_cell.value = round(fval, 2)
+                    zal_cell.number_format = '0.##'
             except (ValueError, TypeError):
                 zal_cell.value = zal
         # column 5 (Фактичний залишок) — left empty for manual entry

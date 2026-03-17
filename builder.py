@@ -96,7 +96,7 @@ def build_rows(ops_df, prices):
             cols = _agg_cols(dm)
             if all(v == 0 for v in cols.values()):
                 continue
-            zal = int(dm['Кількість'].sum())
+            zal = round(float(dm['Кількість'].sum()), 4)
             mrows.append({'type': 'data', 'Артикул': art, 'Назва': name, 'Місяць': month,
                           **cols, 'Залишок': zal, 'Ціна': '', 'Сума': ''})
 
@@ -105,7 +105,7 @@ def build_rows(ops_df, prices):
         rows.extend(mrows)
 
         tcols = _agg_cols(df_a)
-        tz    = int(df_a['Кількість'].sum())
+        tz    = round(float(df_a['Кількість'].sum()), 4)
         price = prices.get(art)
         ts    = round(tz * price, 2) if price else None
 
@@ -139,7 +139,7 @@ def build_summary_rows(ops_df, prices):
         cols  = _agg_cols(df_a)
         if all(v == 0 for v in cols.values()):
             continue
-        zal   = int(df_a['Кількість'].sum())
+        zal   = round(float(df_a['Кількість'].sum()), 4)
         price = prices.get(art)
         suma  = round(zal * price, 2) if price else None
 
