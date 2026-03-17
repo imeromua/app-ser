@@ -146,13 +146,12 @@ def build_rows(ops_df, prices):
 
 def export_excel(header, rows, grand):
     out  = io.BytesIO()
-    cols = ['Артикул','Назва','Місяць','ПрВ','Кнк','ПрИ','СпП','Апс','Залишок','Ціна','Сума']
+    cols = ['Артикул','Назва','Місяць','ПрВ (прихід)','Кнк (продажі)','ПрИ (переміщення)','СпП (списання)','Апс (акт пересорту)','Залишок','Ціна','Сума']
+    col_keys = ['Артикул','Назва','Місяць','ПрВ','Кнк','ПрИ','СпП','Апс','Залишок','Ціна','Сума']
     hfill = PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid')
     sfill = PatternFill(start_color='D9E1F2', end_color='D9E1F2', fill_type='solid')
-    gfill = PatternFill(start_color='1F3864', end_color='1F3864', fill_type='solid')
     hfont = Font(color='FFFFFF', bold=True)
     sfont = Font(bold=True, color='1F3864')
-    gfont = Font(color='FFFFFF', bold=True)
 
     with pd.ExcelWriter(out, engine='openpyxl') as writer:
         pd.DataFrame([[]]).to_excel(writer, index=False, header=False,
@@ -177,8 +176,8 @@ def export_excel(header, rows, grand):
             rt = row.get('type')
             if rt == 'spacer':
                 dr += 1; continue
-            for ci, cn in enumerate(cols, 1):
-                val  = row.get(cn, '')
+            for ci, (cn_display, ck) in enumerate(zip(cols, col_keys), 1):
+                val  = row.get(ck, '')
                 cell = ws.cell(row=dr, column=ci)
                 if val == '' or val is None:
                     cell.value = None
@@ -186,9 +185,9 @@ def export_excel(header, rows, grand):
                     cell.value = val
                 else:
                     try:
-                        cell.value = float(val) if cn in ('Ціна','Сума') else int(val)
-                        if cn == 'Сума': cell.number_format = '#,##0.00'
-                        if cn == 'Ціна': cell.number_format = '0.00'
+                        cell.value = float(val) if ck in ('Ціна','Сума') else int(val)
+                        if ck == 'Сума': cell.number_format = '#,##0.00'
+                        if ck == 'Ціна': cell.number_format = '0.00'
                     except:
                         cell.value = val
                 if rt == 'subtotal':
@@ -197,18 +196,7 @@ def export_excel(header, rows, grand):
                     cell.alignment = Alignment(horizontal='right')
             dr += 1
 
-        for ci, cn in enumerate(cols, 1):
-            cell = ws.cell(row=dr+1, column=ci)
-            if cn == 'Назва': cell.value = 'ЗАГАЛЬНИЙ ПІДСУМОК'
-            elif cn in grand and grand[cn]:
-                try:
-                    cell.value = float(grand[cn]) if cn in ('Сума',) else int(grand[cn])
-                    if cn == 'Сума': cell.number_format = '#,##0.00'
-                except: pass
-            cell.fill = gfill; cell.font = gfont
-            if ci > 2: cell.alignment = Alignment(horizontal='right')
-
-        for i, w in enumerate([12,42,10,7,7,7,7,7,10,10,13], 1):
+        for i, w in enumerate([12,42,10,10,10,14,13,16,10,10,13], 1):
             ws.column_dimensions[get_column_letter(i)].width = w
         ws.freeze_panes = f'A{HR+1}'
 
@@ -293,7 +281,6 @@ RESULT_HTML = """<!DOCTYPE html>
     thead th{background:#1F3864!important;color:#fff!important;text-align:center;
       border:1px solid #4472C4!important;white-space:nowrap;padding:7px 10px}
     tr.subtotal td{background:#D9E1F2!important;font-weight:700;color:#1F3864}
-    tr.grand td{background:#1F3864!important;color:#fff!important;font-weight:700}
     tr.spacer{height:5px;background:#f0f4f8!important}
     td.num{text-align:right;padding-right:10px!important}
     td.ctr{text-align:center}
@@ -322,7 +309,7 @@ RESULT_HTML = """<!DOCTYPE html>
     {% set cards = [
       ('ПрВ (прихід)', grand.ПрВ, '#1F3864'),
       ('Кнк (продажі)', grand.Кнк, '#c0392b'),
-      ('ПрИ (переміщ.)', grand.ПрИ, '#7f8c8d'),
+      ('ПрИ (переміщення)', grand.ПрИ, '#7f8c8d'),
       ('СпП (списання)', grand.СпП, '#e67e22'),
       ('Залишок, шт', grand.Залишок, '#27ae60'),
       ('Сума залишків, грн', grand.Сума|int, '#8e44ad'),
@@ -351,7 +338,8 @@ RESULT_HTML = """<!DOCTYPE html>
         <thead>
           <tr>
             <th>Артикул</th><th>Назва товару</th><th>Місяць</th>
-            <th>ПрВ</th><th>Кнк</th><th>ПрИ</th><th>СпП</th><th>Апс</th>
+            <th>ПрВ (прихід)</th><th>Кнк (продажі)</th><th>ПрИ (переміщення)</th>
+            <th>СпП (списання)</th><th>Апс (акт пересорту)</th>
             <th>Залишок</th><th>Ціна</th><th>Сума, грн</th>
           </tr>
         </thead>
@@ -389,19 +377,6 @@ RESULT_HTML = """<!DOCTYPE html>
           {% endif %}
         {% endfor %}
         </tbody>
-        <tfoot>
-          <tr class="grand">
-            <td colspan="3" class="ps-2 fw-bold">ЗАГАЛЬНИЙ ПІДСУМОК</td>
-            <td class="num">{{ grand.ПрВ }}</td>
-            <td class="num">{{ grand.Кнк }}</td>
-            <td class="num">{{ grand.ПрИ }}</td>
-            <td class="num">{{ grand.СпП }}</td>
-            <td class="num">{{ grand.Апс }}</td>
-            <td class="num fw-bold">{{ grand.Залишок }}</td>
-            <td></td>
-            <td class="num fw-bold">{{ "{:,.2f}".format(grand.Сума) }}</td>
-          </tr>
-        </tfoot>
       </table>
     </div>
   </div>
