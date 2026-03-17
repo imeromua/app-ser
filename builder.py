@@ -14,6 +14,40 @@ _OP_TO_COL = {
     'Апк (Корегування)':           'Апс',
 }
 
+# Операції, що є ПРИХОДОМ у звіті звіті «По документах»
+_OP_IS_PRYHID = {
+    'ПрВ (Прихід)',             # Прямий прихід
+    'Ппт (Переміщення Прихід)',  # Ппт з іншого магазину — приходить до нас
+}
+
+# Операції, що є РОЗХОДОМ у звіті «По документах»
+_OP_IS_ROZKHID = {
+    'Кнк (Продаж)',              # Продаж
+    'ПрИ (Переміщення)',          # Пряме переміщення (ПрИ)
+    'Ппт (Переміщення Розхід)',   # Ппт/X016 — іде з нашого магазину
+    'СпП (Списання)',             # Списання
+}
+# Апк (Корегування) — може бути + або −, визначаємо по знаку qty
+
+
+def _doc_pryhid_rozkhid(op_name: str, qty: float):
+    """
+    Повертає (pryhid_val, rozkhid_val) для звіту «По документах».
+    Логіка визначення по назві операції, а не по знаку qty:
+      - ПрВ, Ппт(Прихід)                → ПРИХІД
+      - Кнк, ПрИ, Ппт(Розхід), СпП  → РОЗХІД
+      - Апк (корегування)           → знак по qty (+ прихід, − розхід)
+    """
+    abs_qty = abs(qty)
+    if op_name in _OP_IS_PRYHID:
+        return abs_qty, 0.0
+    if op_name in _OP_IS_ROZKHID:
+        return 0.0, abs_qty
+    # Апк / Інше — по знаку
+    if qty >= 0:
+        return abs_qty, 0.0
+    return 0.0, abs_qty
+
 
 def _agg_cols(df_slice):
     """
@@ -116,6 +150,11 @@ def build_document_rows(ops_df, prices):
     """
     Звіт «По документах» — хронологічний список операцій на кожен артикул
     з накопичувальним залишком (Running Total).
+
+    Прихід/Розхід визначається по назві операції, а НЕ по знаку qty:
+      ПрВ, Ппт(Прихід)               → в колонку Прихід
+      Кнк, ПрИ, Ппт(Розхід), СпП → в колонку Розхід
+      Апк (корегування)          → qty > 0: Прихід; qty < 0: Розхід
     """
     if ops_df.empty:
         return [], {'Прихід': 0, 'Розхід': 0, 'Залишок': 0}
@@ -124,22 +163,22 @@ def build_document_rows(ops_df, prices):
     rows  = []
     grand = {'Прихід': 0.0, 'Розхід': 0.0, 'Залишок': 0}
 
-    has_pryhid  = 'Прихід'  in ops_df.columns
-    has_rozkhid = 'Розхід'  in ops_df.columns
-
     for _, ar in articles.iterrows():
         art, name = ar['Артикул'], ar['Назва']
         df_a = ops_df[ops_df['Артикул'] == art].copy()
         df_a = df_a.sort_values('Дата', na_position='last').reset_index(drop=True)
 
-        running_balance = 0
+        running_balance = 0.0
         art_pryhid  = 0.0
         art_rozkhid = 0.0
 
         for _, op in df_a.iterrows():
-            qty         = float(op['Кількість'])
-            pryhid_val  = float(op['Прихід']) if has_pryhid  else max(0.0, qty)
-            rozkhid_val = float(op['Розхід']) if has_rozkhid else abs(min(0.0, qty))
+            qty = float(op['Кількість'])
+            op_name = op['Операція']
+
+            # Прихід/Розхід — за назвою операції, а не знаком qty
+            pryhid_val, rozkhid_val = _doc_pryhid_rozkhid(op_name, qty)
+
             running_balance = round(running_balance + qty, 4)
 
             d = op['Дата']
@@ -150,7 +189,7 @@ def build_document_rows(ops_df, prices):
                 'Артикул':   art,
                 'Назва':     name,
                 'Дата':      date_str,
-                'Операція':  op['Операція'],
+                'Операція':  op_name,
                 'Документ':  op.get('Документ', ''),
                 'Прихід':    pryhid_val  if pryhid_val  else '',
                 'Розхід':    rozkhid_val if rozkhid_val else '',
