@@ -46,43 +46,44 @@ def _is_own_shop(doc_text: str) -> bool:
     return after_slash_norm.startswith(shop_norm)
 
 
-def _classify(doc_text: str, raw_qty: float):
-    """Класифікує операцію ВИКЛЮЧНО на основі тексту документа."""
+def _classify_operation(doc_text: str, raw_qty: float):
+    """Класифікує операцію ВИКЛЮЧНО на основі тексту документа.
+    Повертає суворі назви, що збігаються з ключами _OP_MAP у builder.py."""
     abs_qty = abs(raw_qty)
-    op = '\u0406\u043dше'
+    op = 'Інше'
     pryhid_val, rozkhid_val, inv_val = 0.0, 0.0, 0.0
 
-    if '\u041a\u043d\u043a' in doc_text:
-        op = '\u041a\u043d\u043a (\u041f\u0440\u043e\u0434\u0430\u0436\u0456)'
+    if 'Кнк' in doc_text:
+        op = 'Кнк (Продажі)'
         rozkhid_val = abs_qty
-    elif '\u0421\u043f\u041e' in doc_text or '\u0421\u043f\u041f' in doc_text:
-        op = '\u0421\u043f\u041f (\u0421\u043f\u0438\u0441\u0430\u043d\u043d\u044f)'
+    elif 'СпО' in doc_text or 'СпП' in doc_text:
+        op = 'СпП (Списання)'
         rozkhid_val = abs_qty
-    elif '\u041f\u0440\u0418' in doc_text:
-        op = '\u041f\u0440\u0418 (\u041f\u0435\u0440\u0435\u043c\u0456\u0449\u0435\u043d\u043d\u044f)'
-        rozkhid_val = abs_qty
-    elif '\u0410\u043f\u043a' in doc_text or '\u0410\u043f\u0441' in doc_text:
-        op = '\u0410\u043f\u0441 (\u0410\u043a\u0442 \u043f\u0435\u0440\u0435\u0441\u043e\u0440\u0442\u0443)'
+    elif 'Апк' in doc_text or 'Апс' in doc_text:
+        op = 'Апс (Акт пересорту)'
         inv_val = raw_qty
-    elif '\u041f\u0440\u0412' in doc_text:
-        op = '\u041f\u0440\u0412 (\u041f\u0440\u0438\u0445\u0456\u0434)'
+    elif 'ПрВ' in doc_text:
+        op = 'ПрВ (Прихід)'
         pryhid_val = abs_qty
-    elif re.search(r'[\u041f\u043f][\u041f\u043f][\u0422\u0442]', doc_text):
-        # П\u043f\u0442 (п\u0435\u0440\u0435\u043c\u0456\u0449\u0435\u043d\u043d\u044f \u043c\u0456\u0436 \u043c\u0430\u0433\u0430\u0437\u0438\u043d\u0430\u043c\u0438)
-        # П\u043f\u0442/X016... \u2014 \u0446\u0435 \u0420\u041e\u0417\u0425\u041e\u0414 (\u043f\u0435\u0440\u0435\u043c\u0456\u0449\u0435\u043d\u043d\u044f \u0437 \u0446\u044c\u043e\u0433\u043e \u043c\u0430\u0433\u0430\u0437\u0438\u043d\u0443)
-        # П\u043f\u0442/<\u0456\u043d\u0448\u0438\u0439> \u2014 \u0446\u0435 ПРИХІД (\u043f\u0435\u0440\u0435\u043c\u0456\u0449\u0435\u043d\u043d\u044f \u0437 \u0456\u043d\u0448\u043e\u0433\u043e \u043c\u0430\u0433\u0430\u0437\u0438\u043d\u0443)
-        if _is_own_shop(doc_text):
-            op = '\u041f\u0440\u0418 (\u041f\u0435\u0440\u0435\u043c\u0456\u0449\u0435\u043d\u043d\u044f)'
+    elif 'ПрИ' in doc_text:
+        op = 'ПрИ (Переміщення)'
+        rozkhid_val = abs_qty
+    elif re.search(r'[Пп][Пп][Тт]', doc_text):
+        # Ппт: якщо містить X016 та Зпт — це РОЗХІД (переміщення з магазину)
+        # інакше — це ПРИХІД (переміщення в магазин)
+        doc_upper = doc_text.upper().replace('Х', 'X')
+        if SHOP_CODE.upper() in doc_upper and 'ЗПТ' in doc_upper:
+            op = 'ПрИ (Переміщення)'
             rozkhid_val = abs_qty
         else:
-            op = '\u041f\u0440\u0412 (\u041f\u0440\u0438\u0445\u0456\u0434)'
+            op = 'ПрВ (Прихід)'
             pryhid_val = abs_qty
     else:
         if raw_qty > 0:
-            op = '\u041f\u0440\u0412 (\u041f\u0440\u0438\u0445\u0456\u0434)'
+            op = 'ПрВ (Прихід)'
             pryhid_val = abs_qty
         else:
-            op = '\u0421\u043f\u041f (\u0421\u043f\u0438\u0441\u0430\u043d\u043d\u044f)'
+            op = 'СпП (Списання)'
             rozkhid_val = abs_qty
 
     return op, pryhid_val, rozkhid_val, inv_val
@@ -104,7 +105,7 @@ def parse_xls(buf):
         'warehouse': ''
     }
 
-    for r in range(min(15, len(df))):
+    for r in range(min(20, len(df))):
         for c in range(len(df.columns)):
             val = str(df.iloc[r, c]).strip()
             if not val or val == 'nan': continue
@@ -224,7 +225,7 @@ def parse_xls(buf):
                 i += 1
                 continue
 
-            op, pryhid_val, rozkhid_val, inv_val = _classify(doc_text, raw_qty)
+            op, pryhid_val, rozkhid_val, inv_val = _classify_operation(doc_text, raw_qty)
             qty = pryhid_val - rozkhid_val + inv_val
 
             m = re.search(r'(\d{2}\.\d{2}\.\d{2})', doc_text)
