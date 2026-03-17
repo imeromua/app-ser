@@ -90,7 +90,7 @@
   <div class="toolbar d-flex gap-2 align-items-center flex-wrap shadow-sm">
     <a href="/" class="btn btn-outline-secondary btn-sm">← Новий файл</a>
     <a href="/download" class="btn btn-success btn-sm">⬇ Завантажити Excel</a>
-    <a href="/download_pdf" class="btn btn-danger btn-sm">📄 Завантажити PDF</a>
+    <button id="pdf-btn" class="btn btn-danger btn-sm" onclick="downloadPdf()">📄 Завантажити PDF</button>
     <span class="text-muted small ms-2">{{ row_count }} рядків | {{ art_count }} артикулів</span>
     <input id="srch" type="text" class="form-control form-control-sm ms-auto"
            style="max-width:260px" placeholder="🔍 Пошук по таблиці...">
@@ -195,5 +195,51 @@ document.getElementById('srch').addEventListener('input',function(){
     tr.style.display=tr.textContent.toLowerCase().includes(q)?'':'none';
   });
 });
+
+async function downloadPdf() {
+  const btn = document.getElementById('pdf-btn');
+  btn.disabled = true;
+  btn.textContent = 'Генерується...';
+
+  let task_id;
+  try {
+    const resp = await fetch('/export/pdf/start', {method: 'POST'});
+    if (!resp.ok) { throw new Error('Помилка запуску задачі'); }
+    ({task_id} = await resp.json());
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = '📄 Завантажити PDF';
+    alert('Помилка: ' + e.message);
+    return;
+  }
+
+  const interval = setInterval(async () => {
+    try {
+      const s = await fetch(`/export/pdf/status/${task_id}`).then(r => r.json());
+      if (s.status === 'ready') {
+        clearInterval(interval);
+        window.removeEventListener('beforeunload', cleanup);
+        window.location.href = `/export/pdf/result/${task_id}`;
+        btn.disabled = false;
+        btn.textContent = '📄 Завантажити PDF';
+      } else if (s.status === 'error') {
+        clearInterval(interval);
+        window.removeEventListener('beforeunload', cleanup);
+        btn.disabled = false;
+        btn.textContent = '📄 Завантажити PDF';
+        alert('Помилка генерації PDF: ' + s.error);
+      }
+    } catch (e) {
+      clearInterval(interval);
+      window.removeEventListener('beforeunload', cleanup);
+      btn.disabled = false;
+      btn.textContent = '📄 Завантажити PDF';
+      alert('Помилка опитування статусу: ' + e.message);
+    }
+  }, 2000);
+
+  function cleanup() { clearInterval(interval); }
+  window.addEventListener('beforeunload', cleanup);
+}
 </script>
 </body></html>
