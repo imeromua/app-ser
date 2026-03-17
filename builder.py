@@ -27,6 +27,7 @@ def build_rows(ops_df, prices):
             pri = int(dm[dm['Операція'] == 'ПрИ']['Кількість'].sum())
             spp = int(dm[dm['Операція'] == 'СпП']['Кількість'].sum())
             aps = int(dm[dm['Операція'] == 'Апс']['Кількість'].sum())
+            # spp (СпП) values may be negative in source data; adding them reduces the balance
             zal = (prv + spp + pri) - knk - aps
             if all(v == 0 for v in [prv, knk, pri, spp, aps]):
                 continue
@@ -81,6 +82,7 @@ def build_summary_rows(ops_df, prices):
         pri = int(df_a[df_a['Операція'] == 'ПрИ']['Кількість'].sum())
         spp = int(df_a[df_a['Операція'] == 'СпП']['Кількість'].sum())
         aps = int(df_a[df_a['Операція'] == 'Апс']['Кількість'].sum())
+        # spp (СпП) values may be negative in source data; adding them reduces the balance
         zal = (prv + spp + pri) - knk - aps
         price = prices.get(art)
         suma = round(zal * price, 2) if price else None
