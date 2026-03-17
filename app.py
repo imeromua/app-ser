@@ -4,23 +4,47 @@
 Запуск: python app.py  →  http://localhost:5000
 """
 
-from flask import Flask, request, render_template_string, send_file
+from flask import Flask, request, render_template_string, send_file, session
+from werkzeug.utils import secure_filename
 import pandas as pd
-import re, io
+import re, io, os, secrets, logging
 from openpyxl.styles import PatternFill, Font, Alignment
 from openpyxl.utils import get_column_letter
 
+logging.basicConfig(level=logging.WARNING)
+
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
+app.secret_key = os.environ.get('SECRET_KEY') or secrets.token_hex(32)
 
 # ─────────────────────────────────────────
 DOC_PREFIXES = ('ПрВ', 'Кнк', 'СпП', 'СпО', 'ПрИ', 'Апс')
+
+ALLOWED_MIME_HEADERS = (
+    b'\xd0\xcf\x11\xe0',  # .xls  (OLE2)
+    b'PK\x03\x04',        # .xlsx (ZIP/OOXML)
+)
 
 def is_article_code(val):
     s = str(val).strip()
     return s.isdigit() and len(s) >= 5
 
+def find_data_start(df):
+    for i in range(5, min(40, len(df))):
+        try:
+            if df.iloc[i, 0] == '+' and is_article_code(str(df.iloc[i, 1]).strip()):
+                return i
+        except Exception:
+            continue
+    return 15  # fallback
+
 def parse_xls(buf):
+    # ── MIME-type validation via magic bytes ──────────────────────────────
+    buf.seek(0)
+    header_bytes = buf.read(4)
+    if not any(header_bytes.startswith(sig) for sig in ALLOWED_MIME_HEADERS):
+        raise ValueError('Невірний тип файлу: дозволено лише .xls та .xlsx')
+    buf.seek(0)
     df = pd.read_excel(buf, sheet_name=0, header=None)
 
     def cell(r, c):
@@ -37,7 +61,7 @@ def parse_xls(buf):
         'warehouse': cell(3, 3),
     }
 
-    data, i = [], 15
+    data, i = [], find_data_start(df)
     cur_art, cur_name = None, ''
 
     while i < len(df):
@@ -74,11 +98,13 @@ def parse_xls(buf):
                             'Артикул': cur_art, 'Назва': cur_name, 'Операція': op,
                             'Дата': d, 'Рік-Місяць': f"{d.year}-{d.month:02d}", 'Кількість': qty
                         })
-                    except: pass
+                    except Exception as e:
+                        logging.warning(f"Рядок {i} пропущено: {e}")
         i += 1
 
     prices = {}
-    for i2 in range(15, len(df)):
+    start = find_data_start(df)
+    for i2 in range(start, len(df)):
         r2 = df.iloc[i2]
         if r2[0] == '+' and is_article_code(str(r2[1]).strip()):
             try:
@@ -200,12 +226,26 @@ def export_excel(header, rows, grand):
             ws.column_dimensions[get_column_letter(i)].width = w
         ws.freeze_panes = f'A{HR+1}'
 
+        # ── Grand Total row ───────────────────────────────────────────────
+        gfill = PatternFill(start_color='1F3864', end_color='1F3864', fill_type='solid')
+        gfont = Font(bold=True, color='FFFFFF', size=12)
+        grand_vals = ['', 'ВСЬОГО', '', grand['ПрВ'], grand['Кнк'],
+                      grand['ПрИ'], grand['СпП'], grand['Апс'],
+                      grand['Залишок'], '', grand['Сума']]
+        for ci, val in enumerate(grand_vals, 1):
+            c = ws.cell(row=dr, column=ci, value=val if val != '' else None)
+            c.fill = gfill
+            c.font = gfont
+            if ci > 2:
+                c.alignment = Alignment(horizontal='right')
+            if ci == 11:
+                c.number_format = '#,##0.00'
+
     out.seek(0)
     return out
 
 
 # ─────────────────────────────────────────
-_cache = {}
 
 INDEX_HTML = """<!DOCTYPE html>
 <html lang="uk">
@@ -240,7 +280,7 @@ INDEX_HTML = """<!DOCTYPE html>
               <p class="text-muted small">або натисніть щоб обрати</p>
               <p id="fn" class="text-success fw-semibold mt-2"></p>
             </div>
-            <input type="file" id="fi" name="file" accept=".xls,.xlsx" class="d-none">
+            <input type="file" id="fi" name="files" accept=".xls,.xlsx" class="d-none" multiple>
             <div id="spin" class="mt-3 text-center d-none">
               <div class="spinner-border text-primary me-2" role="status"></div>
               <span>Обробляємо файл...</span>
@@ -257,11 +297,11 @@ INDEX_HTML = """<!DOCTYPE html>
 const drop=document.getElementById('drop'),fi=document.getElementById('fi'),
       btn=document.getElementById('btn'),fn=document.getElementById('fn'),
       form=document.getElementById('form'),spin=document.getElementById('spin');
-fi.addEventListener('change',()=>{if(fi.files.length){fn.textContent='\u2713 '+fi.files[0].name;btn.disabled=false;}});
+fi.addEventListener('change',()=>{if(fi.files.length){fn.textContent='\u2713 '+Array.from(fi.files).map(f=>f.name).join(', ');btn.disabled=false;}});
 ['dragenter','dragover'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.add('drag');}));
 ['dragleave','drop'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.remove('drag');}));
-drop.addEventListener('drop',ev=>{const f=ev.dataTransfer.files[0];if(f){const dt=new DataTransfer();
-  dt.items.add(f);fi.files=dt.files;fn.textContent='\u2713 '+f.name;btn.disabled=false;}});
+drop.addEventListener('drop',ev=>{const files=ev.dataTransfer.files;if(files.length){const dt=new DataTransfer();
+  Array.from(files).forEach(f=>dt.items.add(f));fi.files=dt.files;fn.textContent='\u2713 '+Array.from(files).map(f=>f.name).join(', ');btn.disabled=false;}});
 form.addEventListener('submit',()=>{spin.classList.remove('d-none');btn.disabled=true;});
 </script>
 </body></html>"""
@@ -350,7 +390,7 @@ RESULT_HTML = """<!DOCTYPE html>
           {% elif row.type == 'subtotal' %}
             <tr class="subtotal">
               <td>{{ row.Артикул }}</td>
-              <td>▶ {{ row.Назва[:52] }}</td>
+              <td title="{{ row.Назва }}">▶ {{ row.Назва[:52] }}{{ '…' if row.Назва|length > 52 else '' }}</td>
               <td class="ctr fw-bold">{{ row.Місяць }}</td>
               <td class="num">{{ row.ПрВ }}</td>
               <td class="num">{{ row.Кнк }}</td>
@@ -364,7 +404,7 @@ RESULT_HTML = """<!DOCTYPE html>
           {% else %}
             <tr class="data-row">
               <td>{{ row.Артикул }}</td>
-              <td>{{ row.Назва[:55] }}</td>
+              <td title="{{ row.Назва }}">{{ row.Назва[:55] }}{{ '…' if row.Назва|length > 55 else '' }}</td>
               <td class="ctr">{{ row.Місяць }}</td>
               <td class="num">{{ row.ПрВ if row.ПрВ else '' }}</td>
               <td class="num">{{ row.Кнк if row.Кнк else '' }}</td>
@@ -399,16 +439,36 @@ def index():
 
 @app.route('/upload', methods=['POST'])
 def upload():
-    if 'file' not in request.files:
+    files = request.files.getlist('files')
+    if not files or all(not f.filename for f in files):
         return render_template_string(INDEX_HTML, error='Файл не знайдено')
-    f = request.files['file']
-    if not f.filename:
-        return render_template_string(INDEX_HTML, error='Файл не вибрано')
     try:
-        buf = io.BytesIO(f.read())
-        header, ops_df, prices = parse_xls(buf)
-        rows, grand = build_rows(ops_df, prices)
-        _cache['last'] = (header, rows, grand)
+        all_ops, all_prices = [], {}
+        first_header = None
+        first_safe_name = 'ruh_tovariv_звіт.xlsx'
+
+        for f in files:
+            if not f.filename:
+                continue
+            buf = io.BytesIO(f.read())
+            hdr, ops_df, prices = parse_xls(buf)
+            if first_header is None:
+                first_header = hdr
+                safe_base = os.path.splitext(secure_filename(f.filename))[0]
+                first_safe_name = safe_base + '_звіт.xlsx'
+            all_ops.append(ops_df)
+            all_prices.update(prices)
+
+        combined_df = pd.concat(all_ops, ignore_index=True, sort=False) if all_ops else pd.DataFrame()
+        header = first_header or {}
+        rows, grand = build_rows(combined_df, all_prices)
+
+        # Store serialisable data in session
+        session['header'] = header
+        session['rows'] = rows
+        session['grand'] = grand
+        session['download_name'] = first_safe_name
+
         art_count = len(set(r['Артикул'] for r in rows if r.get('type') == 'subtotal'))
         row_count = sum(1 for r in rows if r.get('type') == 'data')
         return render_template_string(RESULT_HTML,
@@ -419,12 +479,15 @@ def upload():
 
 @app.route('/download')
 def download():
-    if 'last' not in _cache:
+    header = session.get('header')
+    rows   = session.get('rows')
+    grand  = session.get('grand')
+    if header is None or rows is None or grand is None:
         return 'Немає даних', 400
-    header, rows, grand = _cache['last']
+    download_name = session.get('download_name', 'ruh_tovariv_звіт.xlsx')
     buf = export_excel(header, rows, grand)
     return send_file(buf, as_attachment=True,
-                     download_name='ruh_tovariv.xlsx',
+                     download_name=download_name,
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 if __name__ == '__main__':
