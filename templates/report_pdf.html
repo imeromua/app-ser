@@ -34,10 +34,13 @@
       background: #1F3864;
       color: #fff;
       text-align: center;
+      vertical-align: middle;
       border: 1px solid #4472C4;
-      padding: 4px 5px;
-      white-space: nowrap;
+      padding: 10px 5px;
+      white-space: normal;
+      word-wrap: break-word;
     }
+    .unit { font-size: 0.8em; color: #666; }
     tbody td {
       border: 1px solid #dee2e6;
       padding: 3px 5px;
@@ -112,10 +115,10 @@
         <td class="ctr">{{ row.Дата }}</td>
         <td>{{ row.Операція }}</td>
         <td>{{ row.Документ[:55] }}{{ '…' if row.Документ|length > 55 else '' }}</td>
-        <td class="num">{{ row.Прихід if row.Прихід != '' else '' }}</td>
-        <td class="num">{{ row.Розхід if row.Розхід != '' else '' }}</td>
-        <td class="num">{{ row.Кількість }}</td>
-        <td class="num">{{ row.Залишок }}</td>
+        <td class="num">{% if row.Прихід != '' %}<span class="value">{{ "%.2f"|format(row.Прихід|float) }}</span><br><span class="unit">шт (кг)</span>{% endif %}</td>
+        <td class="num">{% if row.Розхід != '' %}<span class="value">{{ "%.2f"|format(row.Розхід|float) }}</span><br><span class="unit">шт (кг)</span>{% endif %}</td>
+        <td class="num"><span class="value">{{ "%.2f"|format(row.Кількість|float) }}</span><br><span class="unit">шт (кг)</span></td>
+        <td class="num"><span class="value">{{ "%.2f"|format(row.Залишок|float) }}</span><br><span class="unit">шт (кг)</span></td>
       </tr>
     {% endif %}
   {% endfor %}
@@ -123,10 +126,10 @@
   <tfoot>
     <tr>
       <td></td><td>ВСЬОГО</td><td></td><td></td><td></td>
-      <td class="num">{{ grand.Прихід }}</td>
-      <td class="num">{{ grand.Розхід }}</td>
+      <td class="num"><span class="value">{{ "%.2f"|format(grand.Прихід|float) }}</span></td>
+      <td class="num"><span class="value">{{ "%.2f"|format(grand.Розхід|float) }}</span></td>
       <td></td>
-      <td class="num">{{ grand.Залишок }}</td>
+      <td class="num"><span class="value">{{ "%.2f"|format(grand.Залишок|float) }}</span></td>
     </tr>
   </tfoot>
 </table>
@@ -151,14 +154,14 @@
       <tr class="summary-row">
         <td>{{ row.Артикул }}</td>
         <td>{{ row.Назва[:50] }}{{ '…' if row.Назва|length > 50 else '' }}</td>
-        <td class="num">{{ row.ПрВ if row.ПрВ else '' }}</td>
-        <td class="num">{{ row.Кнк if row.Кнк else '' }}</td>
-        <td class="num">{{ row.ПрИ if row.ПрИ else '' }}</td>
-        <td class="num">{{ row.СпП if row.СпП else '' }}</td>
-        <td class="num">{{ row.Апс if row.Апс else '' }}</td>
-        <td class="num">{{ row.Залишок }}</td>
-        <td class="num">{{ "%.2f"|format(row.Ціна) if row.Ціна != '' else '' }}</td>
-        <td class="num">{{ "{:,.2f}".format(row.Сума) if row.Сума != '' else '' }}</td>
+        <td class="num">{% if row.ПрВ %}<span class="value">{{ "%.2f"|format(row.ПрВ|float) }}</span><br><span class="unit">шт (кг)</span>{% endif %}</td>
+        <td class="num">{% if row.Кнк %}<span class="value">{{ "%.2f"|format(row.Кнк|float) }}</span><br><span class="unit">шт (кг)</span>{% endif %}</td>
+        <td class="num">{% if row.ПрИ %}<span class="value">{{ "%.2f"|format(row.ПрИ|float) }}</span><br><span class="unit">шт (кг)</span>{% endif %}</td>
+        <td class="num">{% if row.СпП %}<span class="value">{{ "%.2f"|format(row.СпП|float) }}</span><br><span class="unit">шт (кг)</span>{% endif %}</td>
+        <td class="num">{% if row.Апс %}<span class="value">{{ "%.2f"|format(row.Апс|float) }}</span><br><span class="unit">шт (кг)</span>{% endif %}</td>
+        <td class="num"><span class="value">{{ "%.2f"|format(row.Залишок|float) }}</span><br><span class="unit">шт (кг)</span></td>
+        <td class="num">{{ "%.2f"|format(row.Ціна|float) if row.Ціна != '' else '' }}</td>
+        <td class="num">{% if row.Сума != '' %}<span class="value">{{ "%.2f"|format(row.Сума|float) }}</span><br><span class="unit">грн</span>{% endif %}</td>
       </tr>
     {% endif %}
   {% endfor %}
@@ -166,14 +169,14 @@
   <tfoot>
     <tr>
       <td></td><td>ВСЬОГО</td>
-      <td class="num">{{ grand.ПрВ }}</td>
-      <td class="num">{{ grand.Кнк }}</td>
-      <td class="num">{{ grand.ПрИ }}</td>
-      <td class="num">{{ grand.СпП }}</td>
-      <td class="num">{{ grand.Апс }}</td>
-      <td class="num">{{ grand.Залишок }}</td>
+      <td class="num">{{ "%.2f"|format(grand.ПрВ|float) }}</td>
+      <td class="num">{{ "%.2f"|format(grand.Кнк|float) }}</td>
+      <td class="num">{{ "%.2f"|format(grand.ПрИ|float) }}</td>
+      <td class="num">{{ "%.2f"|format(grand.СпП|float) }}</td>
+      <td class="num">{{ "%.2f"|format(grand.Апс|float) }}</td>
+      <td class="num">{{ "%.2f"|format(grand.Залишок|float) }}</td>
       <td></td>
-      <td class="num">{{ "{:,.2f}".format(grand.Сума) }}</td>
+      <td class="num">{{ "%.2f"|format(grand.Сума|float) }}</td>
     </tr>
   </tfoot>
 </table>
@@ -199,26 +202,26 @@
         <td>{{ row.Артикул }}</td>
         <td>▶ {{ row.Назва[:48] }}{{ '…' if row.Назва|length > 48 else '' }}</td>
         <td class="ctr">{{ row.Місяць }}</td>
-        <td class="num">{{ row.ПрВ }}</td>
-        <td class="num">{{ row.Кнк }}</td>
-        <td class="num">{{ row.ПрИ if row.ПрИ else '' }}</td>
-        <td class="num">{{ row.СпП if row.СпП else '' }}</td>
-        <td class="num">{{ row.Апс if row.Апс else '' }}</td>
-        <td class="num">{{ row.Залишок }}</td>
-        <td class="num">{{ "%.2f"|format(row.Ціна) if row.Ціна != '' else '' }}</td>
-        <td class="num">{{ "{:,.2f}".format(row.Сума) if row.Сума != '' else '' }}</td>
+        <td class="num"><span class="value">{{ "%.2f"|format(row.ПрВ|float) }}</span><br><span class="unit">шт (кг)</span></td>
+        <td class="num"><span class="value">{{ "%.2f"|format(row.Кнк|float) }}</span><br><span class="unit">шт (кг)</span></td>
+        <td class="num">{% if row.ПрИ %}<span class="value">{{ "%.2f"|format(row.ПрИ|float) }}</span><br><span class="unit">шт (кг)</span>{% endif %}</td>
+        <td class="num">{% if row.СпП %}<span class="value">{{ "%.2f"|format(row.СпП|float) }}</span><br><span class="unit">шт (кг)</span>{% endif %}</td>
+        <td class="num">{% if row.Апс %}<span class="value">{{ "%.2f"|format(row.Апс|float) }}</span><br><span class="unit">шт (кг)</span>{% endif %}</td>
+        <td class="num"><span class="value">{{ "%.2f"|format(row.Залишок|float) }}</span><br><span class="unit">шт (кг)</span></td>
+        <td class="num">{{ "%.2f"|format(row.Ціна|float) if row.Ціна != '' else '' }}</td>
+        <td class="num">{% if row.Сума != '' %}<span class="value">{{ "%.2f"|format(row.Сума|float) }}</span><br><span class="unit">грн</span>{% endif %}</td>
       </tr>
     {% elif row.type == 'data' %}
       <tr>
         <td>{{ row.Артикул }}</td>
         <td>{{ row.Назва[:50] }}{{ '…' if row.Назва|length > 50 else '' }}</td>
         <td class="ctr">{{ row.Місяць }}</td>
-        <td class="num">{{ row.ПрВ if row.ПрВ else '' }}</td>
-        <td class="num">{{ row.Кнк if row.Кнк else '' }}</td>
-        <td class="num">{{ row.ПрИ if row.ПрИ else '' }}</td>
-        <td class="num">{{ row.СпП if row.СпП else '' }}</td>
-        <td class="num">{{ row.Апс if row.Апс else '' }}</td>
-        <td class="num">{{ row.Залишок }}</td>
+        <td class="num">{% if row.ПрВ %}<span class="value">{{ "%.2f"|format(row.ПрВ|float) }}</span><br><span class="unit">шт (кг)</span>{% endif %}</td>
+        <td class="num">{% if row.Кнк %}<span class="value">{{ "%.2f"|format(row.Кнк|float) }}</span><br><span class="unit">шт (кг)</span>{% endif %}</td>
+        <td class="num">{% if row.ПрИ %}<span class="value">{{ "%.2f"|format(row.ПрИ|float) }}</span><br><span class="unit">шт (кг)</span>{% endif %}</td>
+        <td class="num">{% if row.СпП %}<span class="value">{{ "%.2f"|format(row.СпП|float) }}</span><br><span class="unit">шт (кг)</span>{% endif %}</td>
+        <td class="num">{% if row.Апс %}<span class="value">{{ "%.2f"|format(row.Апс|float) }}</span><br><span class="unit">шт (кг)</span>{% endif %}</td>
+        <td class="num"><span class="value">{{ "%.2f"|format(row.Залишок|float) }}</span><br><span class="unit">шт (кг)</span></td>
         <td></td><td></td>
       </tr>
     {% endif %}
@@ -227,14 +230,14 @@
   <tfoot>
     <tr>
       <td></td><td>ВСЬОГО</td><td></td>
-      <td class="num">{{ grand.ПрВ }}</td>
-      <td class="num">{{ grand.Кнк }}</td>
-      <td class="num">{{ grand.ПрИ }}</td>
-      <td class="num">{{ grand.СпП }}</td>
-      <td class="num">{{ grand.Апс }}</td>
-      <td class="num">{{ grand.Залишок }}</td>
+      <td class="num">{{ "%.2f"|format(grand.ПрВ|float) }}</td>
+      <td class="num">{{ "%.2f"|format(grand.Кнк|float) }}</td>
+      <td class="num">{{ "%.2f"|format(grand.ПрИ|float) }}</td>
+      <td class="num">{{ "%.2f"|format(grand.СпП|float) }}</td>
+      <td class="num">{{ "%.2f"|format(grand.Апс|float) }}</td>
+      <td class="num">{{ "%.2f"|format(grand.Залишок|float) }}</td>
       <td></td>
-      <td class="num">{{ "{:,.2f}".format(grand.Сума) }}</td>
+      <td class="num">{{ "%.2f"|format(grand.Сума|float) }}</td>
     </tr>
   </tfoot>
 </table>

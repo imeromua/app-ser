@@ -10,8 +10,9 @@
     .report-title{color:#C0392B;font-size:1.35rem;font-weight:700;text-decoration:underline}
     .report-meta span{margin-right:20px;color:#555}
     .report-meta strong{color:#1F3864}
-    thead th{background:#1F3864!important;color:#fff!important;text-align:center;
-      border:1px solid #4472C4!important;white-space:nowrap;padding:7px 10px}
+    thead th{background:#1F3864!important;color:#fff!important;text-align:center;vertical-align:middle;
+      border:1px solid #4472C4!important;white-space:normal;word-wrap:break-word;padding:10px 5px}
+    .unit{font-size:0.8em;color:#666}
     tr.subtotal td{background:#D9E1F2!important;font-weight:700;color:#1F3864}
     tr.summary-row td{background:#D9E1F2!important;font-weight:700;color:#1F3864}
     tr.spacer{height:5px;background:#f0f4f8!important}
@@ -79,7 +80,7 @@
     {% for lbl,val,clr in cards %}
     <div class="col-6 col-md-2">
       <div class="stat-card shadow-sm" style="background:{{clr}}">
-        <div class="stat-val">{{ "{:,}".format(val) }}</div>
+        <div class="stat-val">{{ "%.2f"|format(val|float) }}</div>
         <div class="stat-lbl">{{ lbl }}</div>
       </div>
     </div>
@@ -127,10 +128,10 @@
                 <td class="ctr">{{ row.Дата }}</td>
                 <td>{{ row.Операція }}</td>
                 <td title="{{ row.Документ }}" class="doc-name">{{ row.Документ[:60] }}</td>
-                <td class="num">{{ row.Прихід if row.Прихід != '' else '' }}</td>
-                <td class="num">{{ row.Розхід if row.Розхід != '' else '' }}</td>
-                <td class="num">{{ row.Кількість }}</td>
-                <td class="num fw-bold">{{ row.Залишок }}</td>
+                                <td class="num">{% if row.Прихід != '' %}<span class="value">{{ "%.2f"|format(row.Прихід|float) }}</span><br><span class="unit">шт (кг)</span>{% endif %}</td>
+                 <td class="num">{% if row.Розхід != '' %}<span class="value">{{ "%.2f"|format(row.Розхід|float) }}</span><br><span class="unit">шт (кг)</span>{% endif %}</td>
+                 <td class="num"><span class="value">{{ "%.2f"|format(row.Кількість|float) }}</span><br><span class="unit">шт (кг)</span></td>
+                 <td class="num fw-bold"><span class="value">{{ "%.2f"|format(row.Залишок|float) }}</span><br><span class="unit">шт (кг)</span></td>
               </tr>
             {% endif %}
           {% endfor %}
@@ -142,40 +143,40 @@
             <tr class="summary-row">
               <td>{{ row.Артикул }}</td>
               <td title="{{ row.Назва }}">{{ row.Назва[:55] }}{{ '…' if row.Назва|length > 55 else '' }}</td>
-              <td class="num">{{ row.ПрВ if row.ПрВ else '' }}</td>
-              <td class="num">{{ row.Кнк if row.Кнк else '' }}</td>
-              <td class="num">{{ row.ПрИ if row.ПрИ else '' }}</td>
-              <td class="num">{{ row.СпП if row.СпП else '' }}</td>
-              <td class="num">{{ row.Апс if row.Апс else '' }}</td>
-              <td class="num fw-bold">{{ row.Залишок }}</td>
-              <td class="num">{{ "%.2f"|format(row.Ціна) if row.Ціна != '' else '' }}</td>
-              <td class="num">{{ "{:,.2f}".format(row.Сума) if row.Сума != '' else '' }}</td>
+              <td class="num">{% if row.ПрВ %}<span class="value">{{ "%.2f"|format(row.ПрВ|float) }}</span><br><span class="unit">шт (кг)</span>{% endif %}</td>
+              <td class="num">{% if row.Кнк %}<span class="value">{{ "%.2f"|format(row.Кнк|float) }}</span><br><span class="unit">шт (кг)</span>{% endif %}</td>
+              <td class="num">{% if row.ПрИ %}<span class="value">{{ "%.2f"|format(row.ПрИ|float) }}</span><br><span class="unit">шт (кг)</span>{% endif %}</td>
+              <td class="num">{% if row.СпП %}<span class="value">{{ "%.2f"|format(row.СпП|float) }}</span><br><span class="unit">шт (кг)</span>{% endif %}</td>
+              <td class="num">{% if row.Апс %}<span class="value">{{ "%.2f"|format(row.Апс|float) }}</span><br><span class="unit">шт (кг)</span>{% endif %}</td>
+              <td class="num fw-bold"><span class="value">{{ "%.2f"|format(row.Залишок|float) }}</span><br><span class="unit">шт (кг)</span></td>
+              <td class="num">{{ "%.2f"|format(row.Ціна|float) if row.Ціна != '' else '' }}</td>
+              <td class="num">{% if row.Сума != '' %}<span class="value">{{ "%.2f"|format(row.Сума|float) }}</span><br><span class="unit">грн</span>{% endif %}</td>
             </tr>
           {% elif row.type == 'subtotal' %}
             <tr class="subtotal">
               <td>{{ row.Артикул }}</td>
               <td title="{{ row.Назва }}">▶ {{ row.Назва[:52] }}{{ '…' if row.Назва|length > 52 else '' }}</td>
               <td class="ctr fw-bold">{{ row.Місяць }}</td>
-              <td class="num">{{ row.ПрВ }}</td>
-              <td class="num">{{ row.Кнк }}</td>
-              <td class="num">{{ row.ПрИ if row.ПрИ else '' }}</td>
-              <td class="num">{{ row.СпП if row.СпП else '' }}</td>
-              <td class="num">{{ row.Апс if row.Апс else '' }}</td>
-              <td class="num fw-bold">{{ row.Залишок }}</td>
-              <td class="num">{{ "%.2f"|format(row.Ціна) if row.Ціна != '' else '' }}</td>
-              <td class="num">{{ "{:,.2f}".format(row.Сума) if row.Сума != '' else '' }}</td>
+              <td class="num"><span class="value">{{ "%.2f"|format(row.ПрВ|float) }}</span><br><span class="unit">шт (кг)</span></td>
+              <td class="num"><span class="value">{{ "%.2f"|format(row.Кнк|float) }}</span><br><span class="unit">шт (кг)</span></td>
+              <td class="num">{% if row.ПрИ %}<span class="value">{{ "%.2f"|format(row.ПрИ|float) }}</span><br><span class="unit">шт (кг)</span>{% endif %}</td>
+              <td class="num">{% if row.СпП %}<span class="value">{{ "%.2f"|format(row.СпП|float) }}</span><br><span class="unit">шт (кг)</span>{% endif %}</td>
+              <td class="num">{% if row.Апс %}<span class="value">{{ "%.2f"|format(row.Апс|float) }}</span><br><span class="unit">шт (кг)</span>{% endif %}</td>
+              <td class="num fw-bold"><span class="value">{{ "%.2f"|format(row.Залишок|float) }}</span><br><span class="unit">шт (кг)</span></td>
+              <td class="num">{{ "%.2f"|format(row.Ціна|float) if row.Ціна != '' else '' }}</td>
+              <td class="num">{% if row.Сума != '' %}<span class="value">{{ "%.2f"|format(row.Сума|float) }}</span><br><span class="unit">грн</span>{% endif %}</td>
             </tr>
           {% else %}
             <tr class="data-row">
               <td>{{ row.Артикул }}</td>
               <td title="{{ row.Назва }}">{{ row.Назва[:55] }}{{ '…' if row.Назва|length > 55 else '' }}</td>
               <td class="ctr">{{ row.Місяць }}</td>
-              <td class="num">{{ row.ПрВ if row.ПрВ else '' }}</td>
-              <td class="num">{{ row.Кнк if row.Кнк else '' }}</td>
-              <td class="num">{{ row.ПрИ if row.ПрИ else '' }}</td>
-              <td class="num">{{ row.СпП if row.СпП else '' }}</td>
-              <td class="num">{{ row.Апс if row.Апс else '' }}</td>
-              <td class="num">{{ row.Залишок }}</td>
+              <td class="num">{% if row.ПрВ %}<span class="value">{{ "%.2f"|format(row.ПрВ|float) }}</span><br><span class="unit">шт (кг)</span>{% endif %}</td>
+              <td class="num">{% if row.Кнк %}<span class="value">{{ "%.2f"|format(row.Кнк|float) }}</span><br><span class="unit">шт (кг)</span>{% endif %}</td>
+              <td class="num">{% if row.ПрИ %}<span class="value">{{ "%.2f"|format(row.ПрИ|float) }}</span><br><span class="unit">шт (кг)</span>{% endif %}</td>
+              <td class="num">{% if row.СпП %}<span class="value">{{ "%.2f"|format(row.СпП|float) }}</span><br><span class="unit">шт (кг)</span>{% endif %}</td>
+              <td class="num">{% if row.Апс %}<span class="value">{{ "%.2f"|format(row.Апс|float) }}</span><br><span class="unit">шт (кг)</span>{% endif %}</td>
+              <td class="num"><span class="value">{{ "%.2f"|format(row.Залишок|float) }}</span><br><span class="unit">шт (кг)</span></td>
               <td></td><td></td>
             </tr>
           {% endif %}
