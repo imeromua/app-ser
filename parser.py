@@ -1,19 +1,29 @@
 """
-parser.py — парсинг XLS/XLSX-файлів звіту EPI.
+parser.py — парсинг XLS-файлів звіту EPI.
+
+Підтримує .xls та .xlsx, стійкий до зсуву колонок.
+Динамічно визначає колонки Прихід/Розхід/Інв за шапкою.
 """
 
 import logging
 import re
+
 import pandas as pd
+
+# Типи документів, що розпізнаються (підрядкове входження)
+_DOC_KEYWORDS = ('Кнк', 'СпО', 'СпП', 'ПрВ', 'ПрИ', 'Апк', 'Апс', 'Ппт')
+
+# X016 — код магазину для Ппт. Перевіряємо обидва варіанти:
+# латинська ASCII 'X' (0x58) та кирилична 'Х' (U+0425) — виглядають однаково!
+_SHOP_CODE      = 'X016'   # Latin X
+_SHOP_CODE_CYR  = '\u0425016'  # Cyrillic Х
+
+_MAX_HEADER_SEARCH_ROWS = 50
 
 ALLOWED_MIME_HEADERS = (
     b'\xd0\xcf\x11\xe0',  # .xls  (OLE2)
     b'PK\x03\x04',        # .xlsx (ZIP/OOXML)
 )
-
-# Код магазину (розхід при Ппт). Перевіряємо обидва варіанти X — латинська і кирилична Х
-SHOP_CODE = 'X016'
-SHOP_CODE_CYR = '\u0425016'  # кирилична Х + 016
 
 
 def is_article_code(val):
@@ -21,144 +31,159 @@ def is_article_code(val):
     return s.isdigit() and len(s) >= 5
 
 
-def _is_empty_text(text: str) -> bool:
-    """Повертає True, якщо текст є відсутнім або порожнім замінником."""
-    return not text or text in ('nan', '-')
-
-
 def _is_own_shop(doc_text: str) -> bool:
     """
-    Повертає True якщо документ Ппт стосується власного магазину (розхід).
-    Ппт/X016... або Ппт/Х016... — це РОЗХІД (переміщення з магазину).
-    Ппт/<будь-що інше> — це ПРИХІД (переміщення в магазин).
-    Перевіряємо обидва варіанти X: латинська ASCII та кирилична Unicode.
+    Повертає True якщо Ппт-документ стосується власного магазину (= РОЗХІД).
+    Ппт/X016... або Ппт/Х016... — це РОЗХІД (переміщення З магазину).
+    Ппт/<інший код> — це ПРИХІД (переміщення В магазин).
+    Перевіряємо обидва варіанти X: ASCII Latin та Unicode Cyrillic.
     """
-    # Витягуємо частину після /
-    m = re.search(r'[Пп][Пп][Тт][/\\](\S+)', doc_text)
+    m = re.search(r'[\u041f\u043f][\u041f\u043f][\u0422\u0442][/\\](\S+)', doc_text)
     if not m:
-        # Якщо / немає — перевіряємо чи є код магазину взагалі в тексті
         t = doc_text.upper()
-        return SHOP_CODE.upper() in t or SHOP_CODE_CYR.upper() in t
+        return (_SHOP_CODE.upper() in t) or (_SHOP_CODE_CYR.upper() in t)
     after_slash = m.group(1).upper()
-    # Нормалізуємо кириличну Х -> латинську X для порівняння
+    # Нормалізація: кирилична Х → латинська X
     after_slash_norm = after_slash.replace('\u0425', 'X')
-    shop_norm = SHOP_CODE.upper().replace('\u0425', 'X')
+    shop_norm = _SHOP_CODE.upper()
     return after_slash_norm.startswith(shop_norm)
 
 
-def _classify_operation(doc_text: str, raw_qty: float):
-    """Класифікує операцію ВИКЛЮЧНО на основі тексту документа.
-    Повертає суворі назви, що збігаються з ключами _OP_MAP у builder.py."""
-    abs_qty = abs(raw_qty)
-    op = 'Інше'
-    pryhid_val, rozkhid_val, inv_val = 0.0, 0.0, 0.0
-
+def _classify_operation(doc_text: str):
+    """
+    Розпізнає тип операції за підрядком у назві документа.
+    Порядок перевірки важливий: перший збіг виграє.
+    Повертає рядок назви операції, що ТОЧНО збігається з ключами _OP_TO_COL у builder.py.
+    """
     if 'Кнк' in doc_text:
-        op = 'Кнк (Продажі)'
-        rozkhid_val = abs_qty
-    elif 'СпО' in doc_text or 'СпП' in doc_text:
-        op = 'СпП (Списання)'
-        rozkhid_val = abs_qty
-    elif 'Апк' in doc_text or 'Апс' in doc_text:
-        op = 'Апс (Акт пересорту)'
-        inv_val = raw_qty
-    elif 'ПрВ' in doc_text:
-        op = 'ПрВ (Прихід)'
-        pryhid_val = abs_qty
-    elif 'ПрИ' in doc_text:
-        op = 'ПрИ (Переміщення)'
-        rozkhid_val = abs_qty
-    elif re.search(r'[Пп][Пп][Тт]', doc_text):
-        # Ппт: якщо містить X016 та Зпт — це РОЗХІД (переміщення з магазину)
-        # інакше — це ПРИХІД (переміщення в магазин)
-        doc_upper = doc_text.upper().replace('Х', 'X')
-        if SHOP_CODE.upper() in doc_upper and 'ЗПТ' in doc_upper:
-            op = 'ПрИ (Переміщення)'
-            rozkhid_val = abs_qty
-        else:
-            op = 'ПрВ (Прихід)'
-            pryhid_val = abs_qty
-    else:
-        if raw_qty > 0:
-            op = 'ПрВ (Прихід)'
-            pryhid_val = abs_qty
-        else:
-            op = 'СпП (Списання)'
-            rozkhid_val = abs_qty
+        return 'Кнк (Продаж)'
+    if 'СпО' in doc_text or 'СпП' in doc_text:
+        return 'СпП (Списання)'
+    if 'ПрВ' in doc_text:
+        return 'ПрВ (Прихід)'
+    if 'ПрИ' in doc_text:
+        return 'ПрИ (Переміщення)'
+    if 'Апк' in doc_text or 'Апс' in doc_text:
+        return 'Апк (Корегування)'
+    if re.search(r'[\u041f\u043f][\u041f\u043f][\u0422\u0442]', doc_text):
+        # Ппт/X016 або Ппт/Х016 — товар ІДЕ з нашого магазину (розхід)
+        # Ппт/<інший> — товар ПРИХОДИТЬ до нас (прихід)
+        if _is_own_shop(doc_text):
+            return 'Ппт (Переміщення Розхід)'
+        return 'Ппт (Переміщення Прихід)'
+    return None
 
-    return op, pryhid_val, rozkhid_val, inv_val
+
+def _find_financial_cols(df):
+    """
+    Шукає рядок шапки з 'Прихід' та 'Розхід'.
+    Повертає (header_row_idx, pryhid_col, rozkhid_col, inv_col).
+    """
+    for i in range(0, min(_MAX_HEADER_SEARCH_ROWS, len(df))):
+        row_str = ' '.join(str(v).strip() for v in df.iloc[i] if pd.notna(v))
+        if 'Прихід' in row_str and 'Розхід' in row_str:
+            pryhid_col = rozkhid_col = inv_col = None
+            for j, v in enumerate(df.iloc[i]):
+                s = str(v).strip() if pd.notna(v) else ''
+                if 'Прихід' in s and pryhid_col is None:
+                    pryhid_col = j
+                elif 'Розхід' in s and rozkhid_col is None:
+                    rozkhid_col = j
+                elif 'Інв' in s and inv_col is None:
+                    inv_col = j
+            if pryhid_col is not None and rozkhid_col is not None:
+                return i, pryhid_col, rozkhid_col, inv_col
+    return None, None, None, None
+
+
+def find_data_start(df, after_row=0):
+    """Знаходить перший рядок з маркером '+' та артикулом."""
+    for i in range(max(after_row, 5), min(after_row + _MAX_HEADER_SEARCH_ROWS + 10, len(df))):
+        try:
+            if df.iloc[i, 0] == '+' and is_article_code(str(df.iloc[i, 1]).strip()):
+                return i
+        except Exception:
+            continue
+    return after_row + 15
 
 
 def parse_xls(buf):
+    # ── MIME-type validation ──────────────────────────────────────────────
     buf.seek(0)
     header_bytes = buf.read(4)
     if not any(header_bytes.startswith(sig) for sig in ALLOWED_MIME_HEADERS):
-        raise ValueError('\u041d\u0435\u0432\u0456\u0440\u043d\u0438\u0439 \u0442\u0438\u043f \u0444\u0430\u0439\u043b\u0443: \u0434\u043e\u0437\u0432\u043e\u043b\u0435\u043d\u043e \u043b\u0438\u0448\u0435 .xls \u0442\u0430 .xlsx')
-
+        raise ValueError('Невірний тип файлу: дозволено лише .xls та .xlsx')
     buf.seek(0)
     df = pd.read_excel(buf, sheet_name=0, header=None)
 
+    def cell(r, c):
+        try:
+            v = df.iloc[r, c]
+            return str(v).strip() if pd.notna(v) else ''
+        except Exception:
+            return ''
+
+    # ── Шапка звіту ──────────────────────────────────────────────────────
     header = {
-        'title': '\u0420\u0443\u0445 \u0442\u043e\u0432\u0430\u0440\u0456\u0432 \u043a\u0456\u043b\u044c\u043a\u0456\u0441\u043d\u0438\u0439',
-        'shop': '',
-        'period': '',
-        'warehouse': ''
+        'title':     cell(0, 0),
+        'shop':      cell(1, 3),
+        'period':    cell(1, 10),
+        'warehouse': cell(3, 3),
     }
+    # Додатковий пошук Магазин:/Склад: якщо стандартні позиції порожні
+    if not header['shop'] or not header['warehouse']:
+        for r in range(min(20, len(df))):
+            for c in range(len(df.columns)):
+                val = str(df.iloc[r, c]).strip()
+                if not val or val == 'nan':
+                    continue
+                if 'Магазин:' in val and not header['shop']:
+                    if len(val) > 10:
+                        header['shop'] = val.replace('Магазин:', '').strip()
+                    else:
+                        for nc in range(c + 1, len(df.columns)):
+                            nval = str(df.iloc[r, nc]).strip()
+                            if nval and nval not in ('nan', '-'):
+                                header['shop'] = nval
+                                break
+                elif 'Склад:' in val and not header['warehouse']:
+                    if len(val) > 8:
+                        header['warehouse'] = val.replace('Склад:', '').strip()
+                    else:
+                        for nc in range(c + 1, len(df.columns)):
+                            nval = str(df.iloc[r, nc]).strip()
+                            if nval and nval not in ('nan', '-'):
+                                header['warehouse'] = nval
+                                break
+                if re.search(r'\d{2}\.\d{2}\.\d{2,4}\s+\d{1,2}:\d{2}', val):
+                    header['period'] = val
 
-    for r in range(min(20, len(df))):
-        for c in range(len(df.columns)):
-            val = str(df.iloc[r, c]).strip()
-            if not val or val == 'nan': continue
+    # ── Динамічний пошук фінансових колонок ──────────────────────────────
+    hdr_row, pryhid_col, rozkhid_col, inv_col = _find_financial_cols(df)
+    data_start = find_data_start(df, after_row=(hdr_row or 0))
 
-            if '\u041c\u0430\u0433\u0430\u0437\u0438\u043d:' in val:
-                if len(val) > 10: header['shop'] = val.replace('\u041c\u0430\u0433\u0430\u0437\u0438\u043d:', '').strip()
-                else:
-                    for nc in range(c+1, len(df.columns)):
-                        nval = str(df.iloc[r, nc]).strip()
-                        if nval and nval != 'nan' and nval != '-':
-                            header['shop'] = nval; break
-
-            elif '\u0421\u043a\u043b\u0430\u0434:' in val:
-                if len(val) > 8: header['warehouse'] = val.replace('\u0421\u043a\u043b\u0430\u0434:', '').strip()
-                else:
-                    for nc in range(c+1, len(df.columns)):
-                        nval = str(df.iloc[r, nc]).strip()
-                        if nval and nval != 'nan' and nval != '-':
-                            header['warehouse'] = nval; break
-
-            if re.search(r'\d{2}\.\d{2}\.\d{2,4}\s+\d{1,2}:\d{2}', val):
-                header['period'] = val
+    def _get_float(row, col_idx):
+        if col_idx is None:
+            return 0.0
+        try:
+            v = row.iloc[col_idx]
+            return float(v) if pd.notna(v) else 0.0
+        except Exception:
+            return 0.0
 
     data = []
-    prices = {}
+    i = data_start
     cur_art, cur_name = None, ''
     last_date = None
 
-    data_start = 10
-    for i in range(min(50, len(df))):
-        try:
-            if str(df.iloc[i, 0]).strip() == '+' and is_article_code(str(df.iloc[i, 1]).strip()):
-                data_start = i
-                break
-        except Exception: pass
-
-    i = data_start
     while i < len(df):
-        row = df.iloc[i]
-        marker = str(row.iloc[0]).strip() if len(row) > 0 and pd.notna(row.iloc[0]) else ''
+        row    = df.iloc[i]
+        marker = row.iloc[0] if len(row) > 0 else None
         col1   = str(row.iloc[1]).strip() if len(row) > 1 and pd.notna(row.iloc[1]) else ''
 
-        if marker == '+':
-            if is_article_code(col1):
-                cur_art  = col1
-                cur_name = str(row.iloc[2]).strip() if len(row) > 2 and pd.notna(row.iloc[2]) else ''
-                for c_idx in range(len(row)-1, 5, -1):
-                    val = row.iloc[c_idx]
-                    if pd.notna(val):
-                        try:
-                            p = float(val)
-                            if p > 0: prices[cur_art] = p; break
-                        except: pass
+        if marker == '+' and is_article_code(col1):
+            cur_art  = col1
+            cur_name = str(row.iloc[2]).strip() if len(row) > 2 and pd.notna(row.iloc[2]) else ''
             i += 1
             continue
 
@@ -169,84 +194,60 @@ def parse_xls(buf):
                 i += 1
                 continue
 
-            if not cur_art:
-                i += 1
-                continue
+            op = _classify_operation(col1) if cur_art else None
+            if op:
+                pryhid_val  = _get_float(row, pryhid_col)
+                rozkhid_val = _get_float(row, rozkhid_col)
+                inv_val     = _get_float(row, inv_col)
+                qty = pryhid_val - rozkhid_val + inv_val
 
-            doc_text = col1
+                if qty == 0 and pryhid_val == 0 and rozkhid_val == 0 and inv_val == 0:
+                    i += 1
+                    continue
 
-            raw_qty = 0.0
-            for col_idx in range(4, min(15, len(row))):
-                v = row.iloc[col_idx]
-                if pd.notna(v) and str(v).strip() != '':
+                m = re.search(r'(\d{2}\.\d{2}\.\d{2})', col1)
+                if m:
                     try:
-                        raw_qty = float(v)
-                        break
-                    except ValueError:
-                        pass
+                        last_date = pd.to_datetime(m.group(1), format='%d.%m.%y')
+                    except Exception as e:
+                        logging.warning(f"Рядок {i}: не вдалося розпізнати дату '{m.group(1)}': {e}")
+                d  = last_date
+                ym = f"{d.year}-{d.month:02d}" if d is not None else ''
 
-            if raw_qty == 0.0 or _is_empty_text(doc_text):
-                for offset in (-1, 1, 2):
-                    idx = i + offset
-                    if not (0 <= idx < len(df)):
-                        continue
-                    adj_row    = df.iloc[idx]
-                    adj_marker = str(adj_row.iloc[0]).strip() if len(adj_row) > 0 and pd.notna(adj_row.iloc[0]) else ''
-                    adj_col1   = str(adj_row.iloc[1]).strip() if len(adj_row) > 1 and pd.notna(adj_row.iloc[1]) else ''
-
-                    if offset > 0 and adj_marker in ('+', '-') and is_article_code(adj_col1):
-                        break
-
-                    adj_qty = 0.0
-                    for ci in range(4, min(15, len(adj_row))):
-                        v = adj_row.iloc[ci]
-                        if pd.notna(v) and str(v).strip() != '':
-                            try:
-                                adj_qty = float(v)
-                                break
-                            except ValueError:
-                                pass
-
-                    adj_text = adj_col1 if not _is_empty_text(adj_col1) and adj_col1 != '+' else ''
-                    if not adj_text and adj_marker not in ('nan', '-', '+', ''):
-                        adj_text = adj_marker
-
-                    if raw_qty == 0.0 and adj_qty != 0.0:
-                        raw_qty = adj_qty
-                        if adj_text and _is_empty_text(doc_text):
-                            doc_text = adj_text
-                        elif adj_text:
-                            doc_text = (adj_text + ' ' + doc_text) if offset < 0 else (doc_text + ' ' + adj_text)
-                        break
-                    elif adj_text and _is_empty_text(doc_text):
-                        doc_text = adj_text
-
-            if raw_qty == 0:
-                i += 1
-                continue
-
-            op, pryhid_val, rozkhid_val, inv_val = _classify_operation(doc_text, raw_qty)
-            qty = pryhid_val - rozkhid_val + inv_val
-
-            m = re.search(r'(\d{2}\.\d{2}\.\d{2})', doc_text)
-            if m:
-                try: last_date = pd.to_datetime(m.group(1), format='%d.%m.%y')
-                except Exception: pass
-
-            ym = f"{last_date.year}-{last_date.month:02d}" if last_date else ''
-
-            data.append({
-                '\u0410\u0440\u0442\u0438\u043a\u0443\u043b':    cur_art,
-                '\u041d\u0430\u0437\u0432\u0430':      cur_name,
-                '\u041e\u043f\u0435\u0440\u0430\u0446\u0456\u044f':   op,
-                '\u0414\u043e\u043a\u0443\u043c\u0435\u043d\u0442':  doc_text,
-                '\u0414\u0430\u0442\u0430':       last_date,
-                '\u0420\u0456\u043a-\u041c\u0456\u0441\u044f\u0446\u044c': ym,
-                '\u041a\u0456\u043b\u044c\u043a\u0456\u0441\u0442\u044c': qty,
-                '\u041f\u0440\u0438\u0445\u0456\u0434':    pryhid_val,
-                '\u0420\u043e\u0437\u0445\u0456\u0434':    rozkhid_val,
-                '\u0406\u043d\u0432':       inv_val
-            })
+                data.append({
+                    'Артикул':    cur_art,
+                    'Назва':      cur_name,
+                    'Операція':   op,
+                    'Документ':   col1,
+                    'Дата':       d,
+                    'Рік-Місяць': ym,
+                    'Кількість':  qty,
+                    'Прихід':     pryhid_val,
+                    'Розхід':     rozkhid_val,
+                })
         i += 1
+
+    # ── Ціни (з '+'-рядків кожного артикулу) ─────────────────────────────
+    prices = {}
+    if inv_col is not None:
+        price_col = inv_col + 3
+    elif rozkhid_col is not None:
+        price_col = rozkhid_col + 4
+    else:
+        price_col = 11
+    for i2 in range(data_start, len(df)):
+        r2 = df.iloc[i2]
+        if r2.iloc[0] == '+' and is_article_code(str(r2.iloc[1]).strip()):
+            try:
+                p = float(r2.iloc[price_col])
+                if p > 0:
+                    prices[str(r2.iloc[1]).strip()] = p
+            except Exception:
+                try:
+                    p = float(r2.iloc[11])
+                    if p > 0:
+                        prices[str(r2.iloc[1]).strip()] = p
+                except Exception:
+                    pass
 
     return header, pd.DataFrame(data), prices

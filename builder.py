@@ -2,32 +2,37 @@
 builder.py — побудова рядків для детального, сумарного та документального звітів.
 """
 
-_OP_MAP = {
+# ── Відображення типу операції на ключ агрегованого стовпця ──────────────────
+# УВАГА: ключі МАЮТЬ точно збігатися з рядками, що повертає _classify_operation() у parser.py
+_OP_TO_COL = {
     'ПрВ (Прихід)':                'ПрВ',
-    'Кнк (Продажі)':               'Кнк',
+    'Кнк (Продаж)':                'Кнк',
     'ПрИ (Переміщення)':           'ПрИ',
+    'Ппт (Переміщення Прихід)':    'ПрИ',
+    'Ппт (Переміщення Розхід)':    'ПрИ',
     'СпП (Списання)':              'СпП',
-    'Апс (Акт пересорту)':         'Апс',
+    'Апк (Корегування)':           'Апс',
 }
+
 
 def _agg_cols(df_slice):
     """
-    Повертає dict з агрегованими значеннями.
-    Беремо абсолютні (додатні) значення для ПрВ, Кнк, СпП та ПрИ!
-    Апс залишаємо зі знаком, оскільки це може бути + або -.
+    Повертає dict з агрегованими значеннями для стовпців ПрВ, Кнк, ПрИ, СпП, Апс.
+    Абсолютні значення для ПрВ, Кнк, СпП; знакові суми для ПрИ та Апс.
     """
     totals = {'ПрВ': 0, 'Кнк': 0, 'ПрИ': 0, 'СпП': 0, 'Апс': 0}
-    for op, col in _OP_MAP.items():
+    for op, col in _OP_TO_COL.items():
         mask = df_slice['Операція'] == op
         s = df_slice.loc[mask, 'Кількість'].sum()
-        # ТУТ ФІКС: ПрИ тепер теж береться по модулю
-        if col in ('ПрВ', 'Кнк', 'СпП', 'ПрИ'):
+        if col in ('ПрВ', 'Кнк', 'СпП'):
             totals[col] += abs(s)
         else:
             totals[col] += s
     return {k: int(v) for k, v in totals.items()}
 
+
 def build_rows(ops_df, prices):
+    """Детальний звіт — розбивка по місяцях для кожного артикулу."""
     if ops_df.empty:
         return [], {'ПрВ': 0, 'Кнк': 0, 'ПрИ': 0, 'СпП': 0, 'Апс': 0, 'Залишок': 0, 'Сума': 0.0}
 
@@ -74,7 +79,9 @@ def build_rows(ops_df, prices):
     grand['Сума'] = round(grand['Сума'], 2)
     return rows, grand
 
+
 def build_summary_rows(ops_df, prices):
+    """Сумарний звіт — один рядок на артикул, без місяцної розбивки."""
     if ops_df.empty:
         return [], {'ПрВ': 0, 'Кнк': 0, 'ПрИ': 0, 'СпП': 0, 'Апс': 0, 'Залишок': 0, 'Сума': 0.0}
 
@@ -104,7 +111,12 @@ def build_summary_rows(ops_df, prices):
     grand['Сума'] = round(grand['Сума'], 2)
     return rows, grand
 
+
 def build_document_rows(ops_df, prices):
+    """
+    Звіт «По документах» — хронологічний список операцій на кожен артикул
+    з накопичувальним залишком (Running Total).
+    """
     if ops_df.empty:
         return [], {'Прихід': 0, 'Розхід': 0, 'Залишок': 0}
 
@@ -112,8 +124,8 @@ def build_document_rows(ops_df, prices):
     rows  = []
     grand = {'Прихід': 0.0, 'Розхід': 0.0, 'Залишок': 0}
 
-    has_pryhid = 'Прихід' in ops_df.columns
-    has_rozkhid = 'Розхід' in ops_df.columns
+    has_pryhid  = 'Прихід'  in ops_df.columns
+    has_rozkhid = 'Розхід'  in ops_df.columns
 
     for _, ar in articles.iterrows():
         art, name = ar['Артикул'], ar['Назва']
@@ -121,12 +133,12 @@ def build_document_rows(ops_df, prices):
         df_a = df_a.sort_values('Дата', na_position='last').reset_index(drop=True)
 
         running_balance = 0
-        art_pryhid = 0.0
+        art_pryhid  = 0.0
         art_rozkhid = 0.0
 
         for _, op in df_a.iterrows():
             qty         = float(op['Кількість'])
-            pryhid_val  = float(op['Прихід']) if has_pryhid else max(0.0, qty)
+            pryhid_val  = float(op['Прихід']) if has_pryhid  else max(0.0, qty)
             rozkhid_val = float(op['Розхід']) if has_rozkhid else abs(min(0.0, qty))
             running_balance = round(running_balance + qty, 4)
 
@@ -140,7 +152,7 @@ def build_document_rows(ops_df, prices):
                 'Дата':      date_str,
                 'Операція':  op['Операція'],
                 'Документ':  op.get('Документ', ''),
-                'Прихід':    pryhid_val if pryhid_val else '',
+                'Прихід':    pryhid_val  if pryhid_val  else '',
                 'Розхід':    rozkhid_val if rozkhid_val else '',
                 'Кількість': qty,
                 'Залишок':   running_balance,
@@ -153,6 +165,6 @@ def build_document_rows(ops_df, prices):
         grand['Розхід']  += art_rozkhid
         grand['Залишок'] += running_balance
 
-    grand['Прихід']  = round(grand['Прихід'], 2)
-    grand['Розхід']  = round(grand['Розхід'], 2)
+    grand['Прихід']  = round(grand['Прихід'],  2)
+    grand['Розхід']  = round(grand['Розхід'],  2)
     return rows, grand
