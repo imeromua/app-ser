@@ -100,8 +100,8 @@ def upload():
                                art_count=art_count, row_count=row_count,
                                category=category, report_type=report_type)
     except Exception as e:
-        logging.exception('Upload error')
-        return render_template('index.html', error=f'Помилка: {e}')
+        logging.exception('Error processing uploaded file')
+        return render_template('index.html', error=f'Помилка обробки файлу: {e}')
 
 
 @app.route('/download')

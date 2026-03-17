@@ -13,6 +13,11 @@ import pandas as pd
 # Типи документів, що розпізнаються (підрядкове входження)
 _DOC_KEYWORDS = ('Кнк', 'СпО', 'СпП', 'ПрВ', 'ПрИ', 'Апк', 'Апс', 'Ппт')
 
+# X016 — код типу Ппт, що означає розхідне (видаткове) переміщення між складами
+_PPT_ROZKHID_CODE = 'Ппт/X016'
+
+_MAX_HEADER_SEARCH_ROWS = 50   # верхня межа рядків для пошуку шапки
+
 ALLOWED_MIME_HEADERS = (
     b'\xd0\xcf\x11\xe0',  # .xls  (OLE2)
     b'PK\x03\x04',        # .xlsx (ZIP/OOXML)
@@ -41,7 +46,8 @@ def _classify_operation(doc_text: str):
     if 'Апк' in doc_text or 'Апс' in doc_text:
         return 'Апк (Корегування)'
     if 'Ппт' in doc_text:
-        if 'Ппт/X016' in doc_text:
+        # Ппт/X016 — видаткове переміщення (товар іде зі складу)
+        if _PPT_ROZKHID_CODE in doc_text:
             return 'Ппт (Переміщення Розхід)'
         return 'Ппт (Переміщення Прихід)'
     return None
@@ -53,7 +59,7 @@ def _find_financial_cols(df):
     Повертає (header_row_idx, pryhid_col, rozkhid_col, inv_col).
     Якщо шапка не знайдена — повертає (None, None, None, None).
     """
-    for i in range(0, min(50, len(df))):
+    for i in range(0, min(_MAX_HEADER_SEARCH_ROWS, len(df))):
         row_str = ' '.join(str(v).strip() for v in df.iloc[i] if pd.notna(v))
         if 'Прихід' in row_str and 'Розхід' in row_str:
             pryhid_col = rozkhid_col = inv_col = None
@@ -72,7 +78,7 @@ def _find_financial_cols(df):
 
 def find_data_start(df, after_row=0):
     """Знаходить перший рядок з маркером '+' та артикулом після after_row."""
-    for i in range(max(after_row, 5), min(after_row + 60, len(df))):
+    for i in range(max(after_row, 5), min(after_row + _MAX_HEADER_SEARCH_ROWS + 10, len(df))):
         try:
             if df.iloc[i, 0] == '+' and is_article_code(str(df.iloc[i, 1]).strip()):
                 return i

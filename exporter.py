@@ -78,8 +78,8 @@ def export_excel(header, rows, grand, report_type='detail'):
                     cell.value = val
                 else:
                     try:
-                        cell.value = float(val) if ck in ('Ціна', 'Сума', 'Прихід', 'Розхід',
-                                                           'Кількість', 'Залишок') else int(val)
+                        float_cols = {'Ціна', 'Сума', 'Прихід', 'Розхід', 'Кількість', 'Залишок'}
+                        cell.value = float(val) if ck in float_cols else int(val)
                         if ck == 'Сума':
                             cell.number_format = '#,##0.00'
                         if ck == 'Ціна':

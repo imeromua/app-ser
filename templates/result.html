@@ -24,6 +24,7 @@
     table{border-collapse:collapse!important}
     td,th{border:1px solid #dee2e6!important}
     tr.data-row:hover td{background:#f8f9fa!important}
+    .doc-name{font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .btn-home{font-size:.95rem;font-weight:600;padding:8px 20px;border-radius:8px}
   </style>
 </head>
@@ -125,7 +126,7 @@
                 <td title="{{ row.Назва }}">{{ row.Назва[:55] }}{{ '…' if row.Назва|length > 55 else '' }}</td>
                 <td class="ctr">{{ row.Дата }}</td>
                 <td>{{ row.Операція }}</td>
-                <td title="{{ row.Документ }}" style="font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ row.Документ[:60] }}</td>
+                <td title="{{ row.Документ }}" class="doc-name">{{ row.Документ[:60] }}</td>
                 <td class="num">{{ row.Прихід if row.Прихід != '' else '' }}</td>
                 <td class="num">{{ row.Розхід if row.Розхід != '' else '' }}</td>
                 <td class="num">{{ row.Кількість }}</td>

@@ -167,7 +167,7 @@ def build_document_rows(ops_df, prices):
         rows.append({'type': 'spacer'})
         grand['Прихід']  += art_pryhid
         grand['Розхід']  += art_rozkhid
-        grand['Залишок']  = running_balance  # останній Running Total
+        grand['Залишок'] += running_balance  # сума фінальних залишків по всіх артикулах
 
     grand['Прихід']  = round(grand['Прихід'], 2)
     grand['Розхід']  = round(grand['Розхід'], 2)
