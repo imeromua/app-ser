@@ -61,6 +61,71 @@ def cleanup_old_sessions(max_age_hours: int = 2) -> None:
 # ─────────────────────────────────────────
 DOC_PREFIXES = ('ПрВ', 'Кнк', 'СпП', 'СпО', 'ПрИ', 'Апс')
 
+CATEGORIES = {
+    'Рибна продукція': [
+        'філе', 'ікра', 'форель', 'лосось', 'оселедець', 'скумбрія',
+        'тунець', 'сардина', 'мінтай', 'горбуша', 'риба', 'рибн',
+        'морепродукт', 'краб', 'креветка', 'кальмар', 'осьмін',
+        'палтус', 'судак', 'карась', 'щука', 'окунь', 'короп',
+        'сьомга', 'кета', 'нерка', 'пікша', 'тріска', 'хек',
+        'анчоус', 'шпрот', 'килька', 'вугор', 'дорадо', 'сібас',
+    ],
+    'Молочна продукція': [
+        'молоко', 'кефір', 'ряженка', 'сметана', 'вершки', 'вершков',
+        'йогурт', 'біфідо', 'біфідойогурт', 'простокваша', 'ацидофілін',
+        'масло', 'маслянк', 'молочн', 'вершкове', 'знежирен',
+        'пастеризован', 'ультрапастеризован', 'питн',
+    ],
+    'Сирна продукція': [
+        'сир', 'сирок', 'сирний', 'творог', 'творожн',
+        'рикота', 'моцарела', 'пармезан', 'гауда', 'едам',
+        'фета', 'брі', 'камамбер', 'чедер', 'адигейськ',
+        'плавлен', 'глазурован', 'кисломолочн', 'зернистий',
+        'фантазія', 'президент', 'ваго', 'тернопіль',
+    ],
+    'Ковбасна продукція': [
+        'ковбаса', 'ковбасн', 'сосиска', 'сосисочн', 'сарделька',
+        'шинка', 'балик', 'карбонат', 'буженина', 'салямі',
+        'паштет', 'холодець', 'зельц', 'кров янка', 'лівер',
+        'шпикачки', 'нарізка', 'рулет', 'грудинка', 'корейка',
+        'бекон', 'окіст', 'мортаделла', 'серв лат', 'докторська',
+        'краківська', 'одеська', 'молочна ковбаса',
+    ],
+    'Овочі та фрукти': [
+        'овоч', 'фрукт', 'картопля', 'морква', 'цибуля', 'часник',
+        'капуста', 'буряк', 'огірок', 'помідор', 'томат', 'перець',
+        'баклажан', 'кабачок', 'гарбуз', 'броколі', 'цвітна',
+        'салат', 'шпинат', 'петрушка', 'кріп', 'зелень',
+        'яблуко', 'груша', 'слива', 'вишня', 'черешня',
+        'виноград', 'полуниця', 'малина', 'смородина',
+        'банан', 'апельсин', 'мандарин', 'лимон', 'грейпфрут',
+        'ківі', 'манго', 'ананас', 'гранат', 'хурма',
+    ],
+}
+
+
+def detect_category(names: list) -> str:
+    """
+    Аналізує список назв товарів, повертає назву категорії.
+    Рахує кількість збігів ключових слів для кожної категорії.
+    Перемагає та, що набрала найбільше балів.
+    При нічиїй — повертає 'Змішана продукція'.
+    """
+    text = ' '.join(str(n) for n in names).lower()
+    scores = {cat: 0 for cat in CATEGORIES}
+    for category, keywords in CATEGORIES.items():
+        for kw in keywords:
+            scores[category] += text.count(kw.lower())
+
+    best_score = max(scores.values())
+    if best_score == 0:
+        return 'Змішана продукція'
+
+    winners = [cat for cat, sc in scores.items() if sc == best_score]
+    if len(winners) == 1:
+        return winners[0]
+    return ' / '.join(winners)
+
 ALLOWED_MIME_HEADERS = (
     b'\xd0\xcf\x11\xe0',  # .xls  (OLE2)
     b'PK\x03\x04',        # .xlsx (ZIP/OOXML)
@@ -379,6 +444,9 @@ RESULT_HTML = """<!DOCTYPE html>
 
   <div class="report-header shadow-sm">
     <div class="report-title">{{ header.title }}</div>
+    <div class="mt-1">
+      <span class="badge" style="background:#27ae60;font-size:.9rem">📦 {{ category }}</span>
+    </div>
     <div class="report-meta mt-1">
       <span><strong>Магазин:</strong> {{ header.shop }}</span>
       <span><strong>Склад:</strong> {{ header.warehouse }}</span>
@@ -504,12 +572,18 @@ def upload():
         header = first_header or {}
         rows, grand = build_rows(combined_df, all_prices)
 
+        all_names = [r['Назва'] for r in rows if r.get('type') == 'data']
+        category = detect_category(all_names)
+        safe_category = category.replace('/', '-').replace(' ', '_')
+        download_name = f"{safe_category}_звіт.xlsx"
+
         # Store data in a server-side temp file; only keep UUID in cookie
         session_id = save_session_data({
             'header': header,
             'rows': rows,
             'grand': grand,
-            'filename': first_safe_name,
+            'filename': download_name,
+            'category': category,
         })
         session['sid'] = session_id
         cleanup_old_sessions()
@@ -518,7 +592,7 @@ def upload():
         row_count = sum(1 for r in rows if r.get('type') == 'data')
         return render_template_string(RESULT_HTML,
             header=header, rows=rows, grand=grand,
-            art_count=art_count, row_count=row_count)
+            art_count=art_count, row_count=row_count, category=category)
     except Exception as e:
         return render_template_string(INDEX_HTML, error=f'Помилка: {e}')
 
