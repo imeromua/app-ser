@@ -24,10 +24,18 @@
     table{border-collapse:collapse!important}
     td,th{border:1px solid #dee2e6!important}
     tr.data-row:hover td{background:#f8f9fa!important}
+    .btn-home{font-size:.95rem;font-weight:600;padding:8px 20px;border-radius:8px}
   </style>
 </head>
 <body>
 <div class="container-fluid py-3 px-4">
+
+  <!-- Кнопка повернення — вгорі, помітна -->
+  <div class="mb-3">
+    <a href="/" class="btn btn-outline-danger btn-home shadow-sm">
+      🏠 На головну — завантажити новий файл
+    </a>
+  </div>
 
   <div class="report-header shadow-sm">
     <div class="report-title">{{ header.title }}</div>
