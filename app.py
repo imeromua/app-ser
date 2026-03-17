@@ -8,6 +8,7 @@ import io
 import logging
 import os
 import secrets
+import threading
 import uuid
 
 from celery.result import AsyncResult
@@ -96,7 +97,7 @@ def upload():
             'report_type': report_type,
         })
         session['sid'] = session_id
-        cleanup_old_sessions()
+        threading.Thread(target=cleanup_old_sessions, daemon=True).start()
 
         return render_template('result.html',
                                header=header, rows=rows, grand=grand,
@@ -126,43 +127,12 @@ def download():
 
 @app.route('/download_pdf')
 def download_pdf():
-    # DEPRECATED: цей маршрут блокує Flask-воркер під час генерації PDF.
-    # Використовуйте /export/pdf/start → /export/pdf/status → /export/pdf/result.
-    try:
-        from weasyprint import HTML
-    except ImportError:
-        return 'WeasyPrint не встановлено. Виконайте: pip install weasyprint', 500
-
-    sid = session.get('sid')
-    data = load_session_data(sid)
-    if not data:
-        return 'Немає даних або сесія застаріла', 400
-
-    header      = data['header']
-    rows        = data['rows']
-    grand       = data['grand']
-    report_type = data.get('report_type', 'detail')
-    category    = data.get('category', '')
-
-    html_content = render_template(
-        'report_pdf.html',
-        header=header,
-        rows=rows,
-        grand=grand,
-        report_type=report_type,
-        category=category,
-    )
-    pdf_bytes = HTML(string=html_content).write_pdf()
-    pdf_name  = data.get('filename', 'звіт').replace('.xlsx', '.pdf')
-
-    pdf_io = io.BytesIO(pdf_bytes)
-    pdf_io.seek(0)
-
-    return send_file(
-        pdf_io,
-        as_attachment=True,
-        download_name=pdf_name,
-        mimetype='application/pdf'
+    # DEPRECATED: маршрут видалено. Використовуйте асинхронний API:
+    # POST /export/pdf/start → GET /export/pdf/status/<task_id> → GET /export/pdf/result/<task_id>
+    return (
+        'Цей маршрут більше не підтримується. '
+        'Використовуйте /export/pdf/start → /export/pdf/status → /export/pdf/result.',
+        410,
     )
 
 
