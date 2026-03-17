@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8">
+  <title>Рух товарів — PDF-звіт</title>
+  <style>
+    @page {
+      size: A4 landscape;
+      margin: 12mm 10mm 12mm 10mm;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: 'DejaVu Sans', Arial, sans-serif;
+      font-size: 9px;
+      color: #1a1a1a;
+      background: #fff;
+    }
+    h1 {
+      font-size: 13px;
+      color: #C0392B;
+      text-decoration: underline;
+      margin: 0 0 4px;
+    }
+    .meta { font-size: 8px; color: #444; margin-bottom: 6px; }
+    .meta span { margin-right: 16px; }
+    .meta strong { color: #1F3864; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 4px;
+    }
+    thead th {
+      background: #1F3864;
+      color: #fff;
+      text-align: center;
+      border: 1px solid #4472C4;
+      padding: 4px 5px;
+      white-space: nowrap;
+    }
+    tbody td {
+      border: 1px solid #dee2e6;
+      padding: 3px 5px;
+    }
+    tbody td.num { text-align: right; }
+    tbody td.ctr { text-align: center; }
+
+    tr.subtotal td, tr.summary-row td {
+      background: #D9E1F2;
+      font-weight: bold;
+      color: #1F3864;
+    }
+    tr.doc-data:nth-child(even) td { background: #f7f9fc; }
+    tr.spacer { height: 4px; }
+
+    tfoot tr td {
+      background: #1F3864;
+      color: #fff;
+      font-weight: bold;
+      border: 1px solid #4472C4;
+      padding: 4px 5px;
+    }
+    tfoot tr td.num { text-align: right; }
+
+    /* Prevent page breaks inside rows */
+    tr { page-break-inside: avoid; }
+    /* New article — allow break before spacer */
+    tr.spacer { page-break-after: auto; }
+  </style>
+</head>
+<body>
+
+<h1>{{ header.title }}</h1>
+<div class="meta">
+  <span><strong>Магазин:</strong> {{ header.shop }}</span>
+  <span><strong>Склад:</strong> {{ header.warehouse }}</span>
+  <span><strong>Період:</strong> {{ header.period }}</span>
+  <span><strong>Категорія:</strong> {{ category }}</span>
+  {% if report_type == 'summary' %}
+  <span><strong>Тип звіту:</strong> Сумарний</span>
+  {% elif report_type == 'document' %}
+  <span><strong>Тип звіту:</strong> По документах</span>
+  {% else %}
+  <span><strong>Тип звіту:</strong> Детальний</span>
+  {% endif %}
+</div>
+
+{% if report_type == 'document' %}
+{# ── Звіт «По документах» ─────────────────────────────────────────── #}
+<table>
+  <thead>
+    <tr>
+      <th>Артикул</th>
+      <th>Назва товару</th>
+      <th>Дата</th>
+      <th>Тип операції</th>
+      <th>Документ</th>
+      <th>Прихід</th>
+      <th>Розхід</th>
+      <th>Кількість</th>
+      <th>Залишок</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for row in rows %}
+    {% if row.type == 'spacer' %}
+      <tr class="spacer"><td colspan="9"></td></tr>
+    {% elif row.type == 'doc_data' %}
+      <tr class="doc-data">
+        <td>{{ row.Артикул }}</td>
+        <td>{{ row.Назва[:50] }}{{ '…' if row.Назва|length > 50 else '' }}</td>
+        <td class="ctr">{{ row.Дата }}</td>
+        <td>{{ row.Операція }}</td>
+        <td>{{ row.Документ[:55] }}{{ '…' if row.Документ|length > 55 else '' }}</td>
+        <td class="num">{{ row.Прихід if row.Прихід != '' else '' }}</td>
+        <td class="num">{{ row.Розхід if row.Розхід != '' else '' }}</td>
+        <td class="num">{{ row.Кількість }}</td>
+        <td class="num">{{ row.Залишок }}</td>
+      </tr>
+    {% endif %}
+  {% endfor %}
+  </tbody>
+  <tfoot>
+    <tr>
+      <td></td><td>ВСЬОГО</td><td></td><td></td><td></td>
+      <td class="num">{{ grand.Прихід }}</td>
+      <td class="num">{{ grand.Розхід }}</td>
+      <td></td>
+      <td class="num">{{ grand.Залишок }}</td>
+    </tr>
+  </tfoot>
+</table>
+
+{% elif report_type == 'summary' %}
+{# ── Сумарний звіт ────────────────────────────────────────────────── #}
+<table>
+  <thead>
+    <tr>
+      <th>Артикул</th><th>Назва товару</th>
+      <th>ПрВ (прихід)</th><th>Кнк (продажі)</th>
+      <th>ПрИ (перемі-щення)</th><th>СпП (списання)</th>
+      <th>Апс (коригу-вання)</th><th>Залишок</th>
+      <th>Ціна</th><th>Сума, грн</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for row in rows %}
+    {% if row.type == 'spacer' %}
+      <tr class="spacer"><td colspan="10"></td></tr>
+    {% elif row.type == 'summary' %}
+      <tr class="summary-row">
+        <td>{{ row.Артикул }}</td>
+        <td>{{ row.Назва[:50] }}{{ '…' if row.Назва|length > 50 else '' }}</td>
+        <td class="num">{{ row.ПрВ if row.ПрВ else '' }}</td>
+        <td class="num">{{ row.Кнк if row.Кнк else '' }}</td>
+        <td class="num">{{ row.ПрИ if row.ПрИ else '' }}</td>
+        <td class="num">{{ row.СпП if row.СпП else '' }}</td>
+        <td class="num">{{ row.Апс if row.Апс else '' }}</td>
+        <td class="num">{{ row.Залишок }}</td>
+        <td class="num">{{ "%.2f"|format(row.Ціна) if row.Ціна != '' else '' }}</td>
+        <td class="num">{{ "{:,.2f}".format(row.Сума) if row.Сума != '' else '' }}</td>
+      </tr>
+    {% endif %}
+  {% endfor %}
+  </tbody>
+  <tfoot>
+    <tr>
+      <td></td><td>ВСЬОГО</td>
+      <td class="num">{{ grand.ПрВ }}</td>
+      <td class="num">{{ grand.Кнк }}</td>
+      <td class="num">{{ grand.ПрИ }}</td>
+      <td class="num">{{ grand.СпП }}</td>
+      <td class="num">{{ grand.Апс }}</td>
+      <td class="num">{{ grand.Залишок }}</td>
+      <td></td>
+      <td class="num">{{ "{:,.2f}".format(grand.Сума) }}</td>
+    </tr>
+  </tfoot>
+</table>
+
+{% else %}
+{# ── Детальний звіт ───────────────────────────────────────────────── #}
+<table>
+  <thead>
+    <tr>
+      <th>Артикул</th><th>Назва товару</th><th>Місяць</th>
+      <th>ПрВ (прихід)</th><th>Кнк (продажі)</th>
+      <th>ПрИ (перемі-щення)</th><th>СпП (списання)</th>
+      <th>Апс (коригу-вання)</th><th>Залишок</th>
+      <th>Ціна</th><th>Сума, грн</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for row in rows %}
+    {% if row.type == 'spacer' %}
+      <tr class="spacer"><td colspan="11"></td></tr>
+    {% elif row.type == 'subtotal' %}
+      <tr class="subtotal">
+        <td>{{ row.Артикул }}</td>
+        <td>▶ {{ row.Назва[:48] }}{{ '…' if row.Назва|length > 48 else '' }}</td>
+        <td class="ctr">{{ row.Місяць }}</td>
+        <td class="num">{{ row.ПрВ }}</td>
+        <td class="num">{{ row.Кнк }}</td>
+        <td class="num">{{ row.ПрИ if row.ПрИ else '' }}</td>
+        <td class="num">{{ row.СпП if row.СпП else '' }}</td>
+        <td class="num">{{ row.Апс if row.Апс else '' }}</td>
+        <td class="num">{{ row.Залишок }}</td>
+        <td class="num">{{ "%.2f"|format(row.Ціна) if row.Ціна != '' else '' }}</td>
+        <td class="num">{{ "{:,.2f}".format(row.Сума) if row.Сума != '' else '' }}</td>
+      </tr>
+    {% elif row.type == 'data' %}
+      <tr>
+        <td>{{ row.Артикул }}</td>
+        <td>{{ row.Назва[:50] }}{{ '…' if row.Назва|length > 50 else '' }}</td>
+        <td class="ctr">{{ row.Місяць }}</td>
+        <td class="num">{{ row.ПрВ if row.ПрВ else '' }}</td>
+        <td class="num">{{ row.Кнк if row.Кнк else '' }}</td>
+        <td class="num">{{ row.ПрИ if row.ПрИ else '' }}</td>
+        <td class="num">{{ row.СпП if row.СпП else '' }}</td>
+        <td class="num">{{ row.Апс if row.Апс else '' }}</td>
+        <td class="num">{{ row.Залишок }}</td>
+        <td></td><td></td>
+      </tr>
+    {% endif %}
+  {% endfor %}
+  </tbody>
+  <tfoot>
+    <tr>
+      <td></td><td>ВСЬОГО</td><td></td>
+      <td class="num">{{ grand.ПрВ }}</td>
+      <td class="num">{{ grand.Кнк }}</td>
+      <td class="num">{{ grand.ПрИ }}</td>
+      <td class="num">{{ grand.СпП }}</td>
+      <td class="num">{{ grand.Апс }}</td>
+      <td class="num">{{ grand.Залишок }}</td>
+      <td></td>
+      <td class="num">{{ "{:,.2f}".format(grand.Сума) }}</td>
+    </tr>
+  </tfoot>
+</table>
+{% endif %}
+
+</body>
+</html>
