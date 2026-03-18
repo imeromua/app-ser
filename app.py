@@ -23,12 +23,20 @@ from flask import Flask, request, render_template, send_file, session, jsonify, 
 from werkzeug.utils import secure_filename
 import pandas as pd
 
-from categories import detect_category
+import datetime
+
+from categories import CATEGORIES, detect_category
 from session_store import save_session_data, load_session_data, cleanup_old_sessions
 from parser import parse_xls, op_display_name
 from builder import build_rows, build_summary_rows, build_document_rows
 from exporter import export_excel
-from reports import get_inventory_template
+from reports import (
+    get_inventory_template,
+    get_summary_report,
+    get_inventory_report,
+    get_top_sales,
+    get_zero_balance,
+)
 from tasks import celery, generate_pdf_task  # noqa: F401 — celery app must be imported
 
 logging.basicConfig(level=logging.WARNING)
@@ -480,6 +488,323 @@ def export_pdf_result(task_id):
         headers={'Content-Disposition': content_disposition},
     )
     return response
+
+
+
+
+# ── New navigation pages ──────────────────────────────────────────────────────
+
+@app.route('/import')
+def import_page():
+    return render_template('import.html')
+
+
+@app.route('/reports')
+def reports_page():
+    return render_template('reports_form.html')
+
+
+@app.route('/inventory')
+def inventory_page():
+    return render_template('inventory_form.html')
+
+
+# ── API endpoints ─────────────────────────────────────────────────────────────
+
+@app.route('/api/stats')
+def api_stats():
+    """Повертає статистику з БД: кількість артикулів, операцій, остання дата імпорту."""
+    try:
+        from db import get_conn
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT
+                        (SELECT COUNT(*) FROM articles)                      AS articles,
+                        (SELECT COUNT(*) FROM operations)                    AS operations,
+                        (SELECT MAX(uploaded_at)::date FROM uploads)         AS last_import
+                    """
+                )
+                row = cur.fetchone()
+                last_import = row['last_import']
+                return jsonify({
+                    'articles': int(row['articles'] or 0),
+                    'operations': int(row['operations'] or 0),
+                    'last_import': last_import.isoformat() if last_import else None,
+                })
+    except Exception as e:
+        logging.exception('api_stats error')
+        return jsonify({'articles': 0, 'operations': 0, 'last_import': None, 'error': str(e)})
+
+
+@app.route('/api/imports')
+def api_imports():
+    """Повертає останні 10 імпортів з таблиці uploads."""
+    try:
+        from db import get_conn
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT
+                        upload_id,
+                        filename,
+                        shop,
+                        warehouse,
+                        period_from,
+                        period_to,
+                        uploaded_at,
+                        strategy,
+                        ops_inserted
+                    FROM uploads
+                    ORDER BY uploaded_at DESC
+                    LIMIT 10
+                    """
+                )
+                rows = []
+                for row in cur.fetchall():
+                    r = dict(row)
+                    for k in ('period_from', 'period_to', 'uploaded_at'):
+                        if r.get(k) is not None:
+                            r[k] = r[k].isoformat()
+                    if r.get('upload_id') is not None:
+                        r['upload_id'] = str(r['upload_id'])
+                    rows.append(r)
+                return jsonify(rows)
+    except Exception as e:
+        logging.exception('api_imports error')
+        return jsonify([])
+
+
+@app.route('/reports/generate', methods=['POST'])
+def reports_generate():
+    """Генерація звіту з БД за параметрами форми."""
+    report_type = request.form.get('report_type', 'summary')
+    date_from_str = request.form.get('date_from', '')
+    date_to_str = request.form.get('date_to', '')
+    category = request.form.get('category', 'all')
+    fmt = request.form.get('format', 'html')
+
+    # Validate and parse dates
+    try:
+        date_from = datetime.date.fromisoformat(date_from_str) if date_from_str else datetime.date.today().replace(day=1)
+        date_to = datetime.date.fromisoformat(date_to_str) if date_to_str else datetime.date.today()
+    except ValueError:
+        return render_template('reports_form.html', error='Невірний формат дат')
+
+    # Build keyword filter from category
+    keywords = CATEGORIES.get(category) if category != 'all' else None
+
+    try:
+        if report_type == 'summary':
+            rows = get_summary_report(date_from, date_to, keywords=keywords)
+        elif report_type == 'inventory':
+            rows = get_inventory_report(date_from, date_to, keywords=keywords)
+        elif report_type == 'top_sales':
+            rows = get_top_sales(date_from, date_to, keywords=keywords)
+        elif report_type == 'zero_balance':
+            rows = get_zero_balance(date_from, date_to, keywords=keywords)
+        else:
+            # detail — same as summary for now
+            rows = get_summary_report(date_from, date_to, keywords=keywords)
+    except Exception as e:
+        logging.exception('reports_generate error')
+        return render_template('reports_form.html', error=f'Помилка генерації звіту: {e}')
+
+    header = {
+        'shop': '',
+        'warehouse': '',
+        'period': f"{date_from.isoformat()} — {date_to.isoformat()}",
+        'period_from': date_from,
+        'period_to': date_to,
+    }
+
+    category_label = category if category != 'all' else 'Всі категорії'
+
+    if fmt == 'excel':
+        # Build excel from DB rows
+        rows_for_export = []
+        for r in rows:
+            row_dict = dict(r)
+            row_dict['type'] = 'summary'
+            rows_for_export.append(row_dict)
+        grand = {}
+        safe_cat = category_label.replace('/', '-').replace(' ', '_')
+        download_name = f"{safe_cat}_{report_type}.xlsx"
+        buf = export_excel(header, rows_for_export, grand, report_type='summary')
+        return send_file(buf, as_attachment=True, download_name=download_name,
+                         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+    if fmt == 'pdf':
+        # Store in session and redirect to pdf export
+        rows_for_export = []
+        for r in rows:
+            row_dict = dict(r)
+            row_dict['type'] = 'summary'
+            rows_for_export.append(row_dict)
+        grand = {}
+        safe_cat = category_label.replace('/', '-').replace(' ', '_')
+        session_id = save_session_data({
+            'header': header,
+            'rows': rows_for_export,
+            'grand': grand,
+            'filename': f"{safe_cat}_{report_type}.pdf",
+            'category': category_label,
+            'report_type': 'summary',
+        })
+        session['sid'] = session_id
+        return jsonify({'redirect': '/export/pdf/start'})
+
+    # html format — render result template
+    return render_template(
+        'result.html',
+        header=header,
+        rows=[dict(r, type='summary') for r in rows],
+        grand={},
+        art_count=len(rows),
+        row_count=len(rows),
+        category=category_label,
+        report_type=report_type,
+    )
+
+
+@app.route('/download_inventory_db')
+def download_inventory_db():
+    """Відомість інвентаризації з БД (без сесії)."""
+    try:
+        inv_rows = get_inventory_template()
+    except Exception:
+        logging.exception('download_inventory_db: get_inventory_template() failed')
+        return 'Помилка читання даних з БД', 500
+
+    if not inv_rows:
+        return 'Немає даних в базі даних для відомості інвентаризації', 400
+
+    inv_rows.sort(key=lambda r: r.get('Назва', '').lower())
+
+    # Build xlsx (reuse same logic as download_inventory)
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = 'Інвентаризація'
+
+    NUM_COLS = 8
+    col_widths = [5, 12, 56, 10, 14, 16, 30, 14]
+    for ci, w in enumerate(col_widths, 1):
+        ws.column_dimensions[get_column_letter(ci)].width = w
+
+    title_font   = XlFont(bold=True, color='FF0000', size=14)
+    label_font   = XlFont(bold=True)
+    value_font   = XlFont(color='1F3864')
+    hdr_fill     = PatternFill(start_color='9DC3E6', end_color='9DC3E6', fill_type='solid')
+    hdr_font     = XlFont(bold=True)
+    hdr_align    = XlAlign(horizontal='center', vertical='center', wrap_text=True)
+    thin         = Side(style='thin')
+    cell_border  = Border(left=thin, right=thin, top=thin, bottom=thin)
+    bot_border   = Border(bottom=thin)
+    center_align = XlAlign(horizontal='center', vertical='center')
+    right_align  = XlAlign(horizontal='right', vertical='center')
+
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=NUM_COLS)
+    tc = ws.cell(row=1, column=1, value='Відомість інвентаризації')
+    tc.font = title_font
+    tc.alignment = XlAlign(horizontal='left', vertical='center')
+    ws.row_dimensions[1].height = 22
+
+    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=2)
+    ws.cell(row=2, column=1, value='Маркет:').font = label_font
+    ws.merge_cells(start_row=2, start_column=3, end_row=2, end_column=NUM_COLS)
+
+    ws.merge_cells(start_row=3, start_column=1, end_row=3, end_column=2)
+    ws.cell(row=3, column=1, value='Єрархія:').font = label_font
+    ws.merge_cells(start_row=3, start_column=3, end_row=3, end_column=NUM_COLS)
+
+    ws.merge_cells(start_row=4, start_column=1, end_row=4, end_column=2)
+    ws.cell(row=4, column=1, value='Примітки:').font = label_font
+    ws.merge_cells(start_row=4, start_column=3, end_row=4, end_column=NUM_COLS)
+    c = ws.cell(row=4, column=3, value='Позапланова інвентаризація')
+    c.font = value_font
+
+    ws.row_dimensions[5].height = 8
+
+    HEADER_ROW = 6
+    col_headers = [
+        '№', 'Артикул', 'Назва',
+        'Од.\nвим.', 'База\n(залишок)',
+        'Фактичні\nзалишки', 'Примітки', 'Час\nінвентаризації',
+    ]
+    for ci, h in enumerate(col_headers, 1):
+        cell = ws.cell(row=HEADER_ROW, column=ci, value=h)
+        cell.font = hdr_font
+        cell.fill = hdr_fill
+        cell.alignment = hdr_align
+        cell.border = cell_border
+    ws.row_dimensions[HEADER_ROW].height = 42
+
+    DATA_START = HEADER_ROW + 1
+    for i, r in enumerate(inv_rows, 1):
+        dr = DATA_START + i - 1
+        c = ws.cell(row=dr, column=1, value=i)
+        c.border = cell_border; c.alignment = center_align
+        c = ws.cell(row=dr, column=2, value=r.get('Артикул', ''))
+        c.border = cell_border; c.alignment = center_align; c.font = XlFont(bold=True)
+        c = ws.cell(row=dr, column=3, value=r.get('Назва', ''))
+        c.border = cell_border; c.alignment = XlAlign(vertical='center', wrap_text=True)
+        ws.cell(row=dr, column=4).border = cell_border
+        zal = r.get('Залишок', '')
+        c = ws.cell(row=dr, column=5)
+        c.border = cell_border; c.alignment = right_align; c.font = XlFont(bold=True)
+        if zal != '' and zal is not None:
+            try:
+                fval = float(zal)
+                if fval.is_integer():
+                    c.value = int(fval)
+                else:
+                    c.value = round(fval, 2)
+                    c.number_format = '0.##'
+            except (ValueError, TypeError):
+                c.value = zal
+        ws.cell(row=dr, column=6).border = cell_border
+        ws.cell(row=dr, column=7).border = cell_border
+        ws.cell(row=dr, column=8).border = cell_border
+
+    last_data_row = DATA_START + len(inv_rows) - 1
+    fr = last_data_row + 2
+    ws.merge_cells(start_row=fr, start_column=1, end_row=fr, end_column=NUM_COLS)
+    ws.cell(row=fr, column=1, value='Особи, які проводили перерахунок:')
+    ws.row_dimensions[fr].height = 22
+
+    for sig_idx in range(2):
+        line_row  = fr + 2 + sig_idx * 4
+        label_row = line_row + 1
+        for col_idx in range(3, 6):
+            ws.cell(row=line_row, column=col_idx).border = bot_border
+        ws.merge_cells(start_row=label_row, start_column=3, end_row=label_row, end_column=5)
+        ws.cell(row=label_row, column=3, value='(ПІП)').alignment = center_align
+        for col_idx in range(7, 9):
+            ws.cell(row=line_row, column=col_idx).border = bot_border
+        ws.merge_cells(start_row=label_row, start_column=7, end_row=label_row, end_column=8)
+        ws.cell(row=label_row, column=7, value='(підпис)').alignment = center_align
+
+    nachal_row = fr + 2 + 2 * 4 + 1
+    ws.merge_cells(start_row=nachal_row, start_column=1, end_row=nachal_row, end_column=NUM_COLS)
+    ws.cell(row=nachal_row, column=1,
+            value='Начальник відділу  ___________________________________')
+    ws.row_dimensions[nachal_row].height = 22
+
+    date_row = nachal_row + 2
+    ws.merge_cells(start_row=date_row, start_column=1, end_row=date_row, end_column=NUM_COLS)
+    ws.cell(row=date_row, column=1,
+            value='Дата проведення  ________________________  час з  ________________  по  ________________')
+    ws.row_dimensions[date_row].height = 22
+
+    out = io.BytesIO()
+    wb.save(out)
+    out.seek(0)
+    today = datetime.date.today().isoformat()
+    return send_file(out, as_attachment=True,
+                     download_name=f'інвентаризація_{today}.xlsx',
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
 if __name__ == '__main__':

@@ -12,12 +12,22 @@ from db import get_conn
 log = logging.getLogger(__name__)
 
 
-def get_summary_report(date_from, date_to) -> list[dict]:
+def _build_keyword_filter(keywords: 'list[str] | None') -> tuple[str, list]:
+    """Повертає SQL-умову та параметри для фільтрації по ключових словах назви артикула."""
+    if not keywords:
+        return '', []
+    conditions = ' OR '.join('a.name ILIKE %s' for _ in keywords)
+    params = [f'%{kw}%' for kw in keywords]
+    return f' AND ({conditions})', params
+
+
+def get_summary_report(date_from, date_to, keywords: 'list[str] | None' = None) -> list[dict]:
     """Зведений звіт по всіх артикулах за період."""
+    kw_sql, kw_params = _build_keyword_filter(keywords)
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """
+                f"""
                 SELECT
                     a.article_id,
                     a.name,
@@ -31,21 +41,22 @@ def get_summary_report(date_from, date_to) -> list[dict]:
                     SUM(o.qty) * a.price                                            AS balance_sum
                 FROM operations o
                 JOIN articles a USING (article_id)
-                WHERE o.op_date BETWEEN %(date_from)s AND %(date_to)s
+                WHERE o.op_date BETWEEN %s AND %s{kw_sql}
                 GROUP BY a.article_id, a.name, a.price
                 ORDER BY a.name
                 """,
-                {'date_from': date_from, 'date_to': date_to},
+                [date_from, date_to] + kw_params,
             )
             return [dict(row) for row in cur.fetchall()]
 
 
-def get_inventory_report(date_from, date_to) -> list[dict]:
+def get_inventory_report(date_from, date_to, keywords: 'list[str] | None' = None) -> list[dict]:
     """Звіт інвентаризацій (Апс) за період."""
+    kw_sql, kw_params = _build_keyword_filter(keywords)
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """
+                f"""
                 SELECT
                     a.article_id,
                     a.name,
@@ -58,20 +69,21 @@ def get_inventory_report(date_from, date_to) -> list[dict]:
                 FROM operations o
                 JOIN articles a USING (article_id)
                 WHERE o.doc_type = 'Апс'
-                  AND o.op_date BETWEEN %(date_from)s AND %(date_to)s
+                  AND o.op_date BETWEEN %s AND %s{kw_sql}
                 ORDER BY o.op_date, a.name
                 """,
-                {'date_from': date_from, 'date_to': date_to},
+                [date_from, date_to] + kw_params,
             )
             return [dict(row) for row in cur.fetchall()]
 
 
-def get_top_sales(date_from, date_to, limit: int = 15) -> list[dict]:
+def get_top_sales(date_from, date_to, limit: int = 15, keywords: 'list[str] | None' = None) -> list[dict]:
     """Топ-N артикулів за продажами (Кнк) за період."""
+    kw_sql, kw_params = _build_keyword_filter(keywords)
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """
+                f"""
                 SELECT
                     a.article_id, a.name, a.price,
                     SUM(ABS(o.qty))           AS total_sold,
@@ -79,33 +91,34 @@ def get_top_sales(date_from, date_to, limit: int = 15) -> list[dict]:
                 FROM operations o
                 JOIN articles a USING (article_id)
                 WHERE o.doc_type = 'Кнк'
-                  AND o.op_date BETWEEN %(date_from)s AND %(date_to)s
+                  AND o.op_date BETWEEN %s AND %s{kw_sql}
                 GROUP BY a.article_id, a.name, a.price
                 ORDER BY total_sold DESC
-                LIMIT %(limit)s
+                LIMIT %s
                 """,
-                {'date_from': date_from, 'date_to': date_to, 'limit': limit},
+                [date_from, date_to] + kw_params + [limit],
             )
             return [dict(row) for row in cur.fetchall()]
 
 
-def get_zero_balance(date_from, date_to) -> list[dict]:
+def get_zero_balance(date_from, date_to, keywords: 'list[str] | None' = None) -> list[dict]:
     """Артикули з нульовим або від'ємним залишком за період."""
+    kw_sql, kw_params = _build_keyword_filter(keywords)
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """
+                f"""
                 SELECT
                     a.article_id, a.name, a.price,
                     SUM(o.qty) AS balance
                 FROM operations o
                 JOIN articles a USING (article_id)
-                WHERE o.op_date BETWEEN %(date_from)s AND %(date_to)s
+                WHERE o.op_date BETWEEN %s AND %s{kw_sql}
                 GROUP BY a.article_id, a.name, a.price
                 HAVING SUM(o.qty) <= 0
                 ORDER BY a.name
                 """,
-                {'date_from': date_from, 'date_to': date_to},
+                [date_from, date_to] + kw_params,
             )
             return [dict(row) for row in cur.fetchall()]
 

@@ -10,7 +10,7 @@ import time
 
 from celery import Celery
 
-REDIS_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+REDIS_URL = os.environ.get('CELERY_BROKER_URL') or os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
 
 celery = Celery(
     'app_ser',
