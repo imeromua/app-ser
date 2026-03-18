@@ -80,6 +80,9 @@ CREATE TABLE IF NOT EXISTS articles (
     updated_at   TIMESTAMP   DEFAULT NOW()
 );
 
+ALTER TABLE articles ADD COLUMN IF NOT EXISTS last_seen_date DATE;
+ALTER TABLE articles ADD COLUMN IF NOT EXISTS price_updated_at DATE;
+
 -- Операції — єдина накопичувальна таблиця
 CREATE TABLE IF NOT EXISTS operations (
     id           BIGSERIAL   PRIMARY KEY,
@@ -136,20 +139,50 @@ def get_max_op_date() -> 'datetime.date | None':
             return row['max_date'] if row else None
 
 
-def upsert_article(conn, article_id: str, name: str, price: float | None) -> None:
-    """Додає або оновлює артикул (ціна і назва оновлюються завжди)."""
+def upsert_article(conn, article_id: str, name: str, price: float | None,
+                   last_seen_date=None) -> None:
+    """Додає або оновлює артикул.
+
+    Оновлює name та price завжди. last_seen_date оновлюється, якщо передано значення.
+    Якщо ціна змінилась — оновлює price_updated_at = last_seen_date та логує зміну.
+    """
     with conn.cursor() as cur:
         cur.execute(
             """
-            INSERT INTO articles (article_id, name, price, updated_at)
-            VALUES (%s, %s, %s, NOW())
+            WITH old_data AS (
+                SELECT price FROM articles WHERE article_id = %s
+            )
+            INSERT INTO articles (article_id, name, price, updated_at, last_seen_date,
+                                  price_updated_at)
+            VALUES (%s, %s, %s, NOW(), %s, CASE WHEN %s IS NOT NULL THEN %s ELSE NULL END)
             ON CONFLICT (article_id) DO UPDATE
-                SET name       = EXCLUDED.name,
-                    price      = EXCLUDED.price,
-                    updated_at = NOW()
+                SET name            = EXCLUDED.name,
+                    updated_at      = NOW(),
+                    last_seen_date  = COALESCE(EXCLUDED.last_seen_date, articles.last_seen_date),
+                    price           = EXCLUDED.price,
+                    price_updated_at = CASE
+                        WHEN articles.price IS DISTINCT FROM EXCLUDED.price
+                            THEN COALESCE(EXCLUDED.last_seen_date, articles.last_seen_date)
+                        ELSE articles.price_updated_at
+                    END
+            RETURNING
+                (xmax = 0)                  AS inserted,
+                (SELECT price FROM old_data) AS old_price
             """,
-            (article_id, name, price),
+            (article_id, article_id, name, price, last_seen_date, price, last_seen_date),
         )
+        row = cur.fetchone()
+        if row and not row['inserted'] and row['old_price'] is not None:
+            try:
+                old = float(row['old_price'])
+                new = float(price) if price is not None else None
+                if new is None or abs(old - new) > 1e-6:
+                    log.info(
+                        'Price changed for article %s: %s → %s (last_seen_date=%s)',
+                        article_id, row['old_price'], price, last_seen_date,
+                    )
+            except (TypeError, ValueError):
+                pass
 
 
 def insert_operation(conn, *, article_id, doc_type, doc_code, subdoc_type,

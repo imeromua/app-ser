@@ -28,6 +28,7 @@ from session_store import save_session_data, load_session_data, cleanup_old_sess
 from parser import parse_xls, op_display_name
 from builder import build_rows, build_summary_rows, build_document_rows
 from exporter import export_excel
+from reports import get_inventory_template
 from tasks import celery, generate_pdf_task  # noqa: F401 — celery app must be imported
 
 logging.basicConfig(level=logging.WARNING)
@@ -178,17 +179,23 @@ def download_inventory():
     hdr = data.get('header', {})
     safe_category = category.replace('/', '-').replace(' ', '_')
 
-    # Select the rows that represent one summary entry per article
-    if report_type == 'document':
-        # Last doc_data row per article carries the final running balance
-        article_map: dict = {}
-        for r in rows:
-            if r.get('type') == 'doc_data':
-                article_map[r['Артикул']] = r
-        inv_rows = list(article_map.values())
-    else:
-        # subtotal rows (detail) and summary rows (summary) are already one per article
-        inv_rows = [r for r in rows if r.get('type') in ('subtotal', 'summary')]
+    # Try to load inventory rows from DB; fall back to session_store on empty DB
+    try:
+        inv_rows = get_inventory_template()
+    except Exception:
+        logging.exception('get_inventory_template() failed, falling back to session_store')
+        inv_rows = []
+
+    if not inv_rows:
+        # Fallback: derive inv_rows from session data
+        if report_type == 'document':
+            article_map: dict = {}
+            for r in rows:
+                if r.get('type') == 'doc_data':
+                    article_map[r['Артикул']] = r
+            inv_rows = list(article_map.values())
+        else:
+            inv_rows = [r for r in rows if r.get('type') in ('subtotal', 'summary')]
 
     if not inv_rows:
         return 'Немає даних для відомості інвентаризації', 400
