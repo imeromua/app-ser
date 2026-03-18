@@ -4,6 +4,9 @@
 Запуск: python app.py  →  http://localhost:5000
 """
 
+from dotenv import load_dotenv
+load_dotenv()
+
 import io
 import logging
 import os
@@ -22,7 +25,7 @@ import pandas as pd
 
 from categories import detect_category
 from session_store import save_session_data, load_session_data, cleanup_old_sessions
-from parser import parse_xls
+from parser import parse_xls, op_display_name
 from builder import build_rows, build_summary_rows, build_document_rows
 from exporter import export_excel
 from tasks import celery, generate_pdf_task  # noqa: F401 — celery app must be imported
@@ -53,11 +56,44 @@ def upload():
             if not f.filename:
                 continue
             buf = io.BytesIO(f.read())
-            hdr, ops_df, prices = parse_xls(buf)
+            result = parse_xls(buf)
+            hdr = result['header']
             if first_header is None:
                 first_header = hdr
+
+            # Збираємо ціни з артикулів
+            all_prices.update({
+                a['article_id']: a['price']
+                for a in result['articles']
+                if a.get('price')
+            })
+
+            # Перетворюємо операції на DataFrame для builder.py
+            articles_map = {a['article_id']: a for a in result['articles']}
+            records = []
+            for op in result['operations']:
+                art = articles_map.get(op['article_id'], {})
+                d   = op['op_date']
+                ym  = f"{d.year}-{d.month:02d}" if d else ''
+                qty = op['qty']
+                src = op['col_source']
+                records.append({
+                    'Артикул':    op['article_id'],
+                    'Назва':      art.get('name', ''),
+                    'Операція':   op_display_name(
+                                      op['doc_type'],
+                                      op.get('subdoc_type'),
+                                      op.get('direction'),
+                                  ),
+                    'Документ':   op.get('doc_code', ''),
+                    'Дата':       d,
+                    'Рік-Місяць': ym,
+                    'Кількість':  qty,
+                    'Прихід':     qty if src == 'G' and qty > 0 else (qty if src == 'I' and qty > 0 else 0.0),
+                    'Розхід':     abs(qty) if src == 'H' else (abs(qty) if src == 'I' and qty < 0 else 0.0),
+                })
+            ops_df = pd.DataFrame(records) if records else pd.DataFrame()
             all_ops.append(ops_df)
-            all_prices.update(prices)
 
         combined_df = pd.concat(all_ops, ignore_index=True, sort=False) if all_ops else pd.DataFrame()
         header = first_header or {}

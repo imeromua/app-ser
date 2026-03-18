@@ -1,24 +1,16 @@
 """
-parser.py — парсинг XLS-файлів звіту EPI.
+parser.py — парсинг XLS-файлів звіту «Рух товарів» EPI.
 
-Підтримує .xls та .xlsx, стійкий до зсуву колонок.
-Динамічно визначає колонки Прихід/Розхід/Інв за шапкою.
+Підтримує .xls та .xlsx.
 """
 
 import logging
 import re
+from datetime import date, datetime
 
 import pandas as pd
 
-# Типи документів, що розпізнаються (підрядкове входження)
-_DOC_KEYWORDS = ('Кнк', 'СпО', 'СпП', 'ПрВ', 'ПрИ', 'Апк', 'Апс', 'Ппт')
-
-# X016 — код магазину для Ппт. Перевіряємо обидва варіанти:
-# латинська ASCII 'X' (0x58) та кирилична 'Х' (U+0425) — виглядають однаково!
-_SHOP_CODE      = 'X016'   # Latin X
-_SHOP_CODE_CYR  = '\u0425016'  # Cyrillic Х
-
-_MAX_HEADER_SEARCH_ROWS = 50
+log = logging.getLogger(__name__)
 
 ALLOWED_MIME_HEADERS = (
     b'\xd0\xcf\x11\xe0',  # .xls  (OLE2)
@@ -26,92 +18,143 @@ ALLOWED_MIME_HEADERS = (
 )
 
 
-def is_article_code(val):
+def is_article_code(val) -> bool:
+    """Повертає True для рядка з рівно 8 цифрами (код артикула)."""
     s = str(val).strip()
     return s.isdigit() and len(s) == 8
 
 
-def _is_own_shop(doc_text: str) -> bool:
+def _parse_period(period_str: str) -> tuple:
     """
-    Повертає True якщо Ппт-документ стосується власного магазину (= РОЗХІД).
-    Ппт/X016... або Ппт/Х016... — це РОЗХІД (переміщення З магазину).
-    Ппт/<інший код> — це ПРИХІД (переміщення В магазин).
-    Перевіряємо обидва варіанти X: ASCII Latin та Unicode Cyrillic.
+    Розбирає рядок "01.01.24   0:00 - 18.03.26  23:59" у (period_from, period_to).
+    Повертає tuple[date | None, date | None].
     """
-    m = re.search(r'[\u041f\u043f][\u041f\u043f][\u0422\u0442][/\\](\S+)', doc_text)
+    parts = re.findall(r'(\d{2}\.\d{2}\.\d{2,4})', period_str)
+
+    def to_date(s):
+        for fmt in ('%d.%m.%y', '%d.%m.%Y'):
+            try:
+                return datetime.strptime(s, fmt).date()
+            except ValueError:
+                continue
+        return None
+
+    period_from = to_date(parts[0]) if len(parts) > 0 else None
+    period_to   = to_date(parts[1]) if len(parts) > 1 else None
+    return period_from, period_to
+
+
+def _has_date(text: str) -> bool:
+    """Перевіряє наявність дати у форматі DD.MM.YY в тексті."""
+    return bool(re.search(r'\d{2}\.\d{2}\.\d{2}\b', text))
+
+
+def _is_subdoc(text: str) -> bool:
+    """Піддокумент — не містить дати, але має '/' між кодами."""
+    return not _has_date(text) and '/' in text
+
+
+def _extract_date(text: str):
+    """Витягує дату DD.MM.YY з тексту. Повертає date або None."""
+    m = re.search(r'(\d{2}\.\d{2}\.\d{2})\b', text)
     if not m:
-        t = doc_text.upper()
-        return (_SHOP_CODE.upper() in t) or (_SHOP_CODE_CYR.upper() in t)
-    after_slash = m.group(1).upper()
-    # Нормалізація: кирилична Х → латинська X
-    after_slash_norm = after_slash.replace('\u0425', 'X')
-    shop_norm = _SHOP_CODE.upper()
-    return after_slash_norm.startswith(shop_norm)
+        return None
+    try:
+        return datetime.strptime(m.group(1), '%d.%m.%y').date()
+    except ValueError:
+        return None
 
 
-def _classify_operation(doc_text: str):
+def _extract_doc_type_code(text: str) -> tuple:
     """
-    Розпізнає тип операції за підрядком у назві документа.
-    Порядок перевірки важливий: перший збіг виграє.
-    Повертає рядок назви операції, що ТОЧНО збігається з ключами _OP_TO_COL у builder.py.
+    Витягує (doc_type, doc_code) з рядка основного документа.
+    Приклад: 'ПрВ/X016-0337298 - 13.11.25' → ('ПрВ', 'X016-0337298')
+    Формат: TYPE/CODE - DATE  (пробіл перед дефісом відокремлює код від дати)
+    Повертає tuple[str, str].
     """
-    if 'Кнк' in doc_text:
-        return 'Кнк (Продаж)'
-    if 'СпО' in doc_text or 'СпП' in doc_text:
-        return 'СпП (Списання)'
-    if 'ПрВ' in doc_text:
-        return 'ПрВ (Прихід)'
-    if 'ПрИ' in doc_text:
-        return 'ПрИ (Переміщення)'
-    if 'Апк' in doc_text or 'Апс' in doc_text:
-        return 'Апк (Корегування)'
-    if re.search(r'[\u041f\u043f][\u041f\u043f][\u0422\u0442]', doc_text):
-        # Ппт/X016 або Ппт/Х016 — товар ІДЕ з нашого магазину (розхід)
-        # Ппт/<інший> — товар ПРИХОДИТЬ до нас (прихід)
-        if _is_own_shop(doc_text):
-            return 'Ппт (Переміщення Розхід)'
-        return 'Ппт (Переміщення Прихід)'
-    return None
+    # Код не містить пробілів — беремо все між '/' і першим пробілом або кінцем рядка
+    m = re.match(r'^(.{3})/(\S+)', text.strip())
+    if m:
+        return m.group(1), m.group(2)
+    return (text[:3] if len(text) >= 3 else text), ''
 
 
-def _find_financial_cols(df):
+def classify_subdoc(subdoc_text: str) -> tuple:
     """
-    Шукає рядок шапки з 'Прихід' та 'Розхід'.
-    Повертає (header_row_idx, pryhid_col, rozkhid_col, inv_col).
+    Визначає тип піддокумента.
+    Повертає (subdoc_type, subdoc_code, direction).
+    direction: 'до_нас' / 'від_нас' / None
+
+    Всі коди мають формат PREFIX-DIGITS (наприклад, X016-0000467, FDL-29329406).
+    Використовуємо `\\w+-\\d+` для точного вилучення коду без зупинки на
+    внутрішньому дефісі.
     """
-    for i in range(0, min(_MAX_HEADER_SEARCH_ROWS, len(df))):
-        row_str = ' '.join(str(v).strip() for v in df.iloc[i] if pd.notna(v))
-        if 'Прихід' in row_str and 'Розхід' in row_str:
-            pryhid_col = rozkhid_col = inv_col = None
-            for j, v in enumerate(df.iloc[i]):
-                s = str(v).strip() if pd.notna(v) else ''
-                if 'Прихід' in s and pryhid_col is None:
-                    pryhid_col = j
-                elif 'Розхід' in s and rozkhid_col is None:
-                    rozkhid_col = j
-                elif 'Інв' in s and inv_col is None:
-                    inv_col = j
-            if pryhid_col is not None and rozkhid_col is not None:
-                return i, pryhid_col, rozkhid_col, inv_col
-    return None, None, None, None
+    # Ппт/X016-... або Ппт/Х016-... → переміщення ВІД нас
+    # Перевіряємо обидва варіанти X: ASCII Latin (0x58) та Cyrillic (U+0425)
+    if re.search(r'Ппт/[X\u0425]016', subdoc_text):
+        code = re.search(r'Ппт/([X\u0425]\w*-\d+)', subdoc_text)
+        return 'Ппт', code.group(1) if code else '', 'від_нас'
+
+    # Ппт/FDL-... або Ппт/DP-... → переміщення ДО нас
+    if re.search(r'Ппт/(FDL|DP)', subdoc_text):
+        code = re.search(r'Ппт/(\w+-\d+)', subdoc_text)
+        return 'Ппт', code.group(1) if code else '', 'до_нас'
+
+    # СпО/... → документ списання
+    if 'СпО' in subdoc_text:
+        code = re.search(r'СпО/(\w+-\d+)', subdoc_text)
+        return 'СпО', code.group(1) if code else '', None
+
+    # Апк/... → акт пересорту/недовозу
+    if 'Апк' in subdoc_text:
+        code = re.search(r'Апк/(\w+-\d+)', subdoc_text)
+        return 'Апк', code.group(1) if code else '', None
+
+    # ВИн/... → відомість інвентаризації
+    if 'ВИн' in subdoc_text:
+        code = re.search(r'ВИн/(\w+-\d+)', subdoc_text)
+        return 'ВИн', code.group(1) if code else '', None
+
+    # Зпт/... → запит на переміщення (ігноруємо, не впливає на qty)
+    if 'Зпт' in subdoc_text:
+        return 'Зпт', '', None
+
+    return None, None, None
 
 
-def find_data_start(df, after_row=0):
-    """Знаходить перший рядок з маркером '+' та артикулом."""
-    for i in range(max(after_row, 5), min(after_row + _MAX_HEADER_SEARCH_ROWS + 10, len(df))):
+def get_qty(row, doc_type: str) -> tuple:
+    """
+    Повертає (qty, col_source) де col_source = 'G' / 'H' / 'I'.
+    ПрВ/СпП/ПрИ → col G (index 6)
+    Кнк          → col H (index 7)
+    Апс          → col I (index 8)
+    """
+    def safe_float(idx):
         try:
-            if df.iloc[i, 0] == '+' and is_article_code(str(df.iloc[i, 1]).strip()):
-                return i
+            v = row.iloc[idx]
+            return float(v) if pd.notna(v) else 0.0
         except Exception:
-            continue
-    logging.warning(
-        "find_data_start: маркер '+' не знайдено після рядка %d, використовується fallback after_row+15=%d",
-        after_row, after_row + 15,
-    )
-    return after_row + 15
+            return 0.0
+
+    if doc_type == 'Кнк':
+        return safe_float(7), 'H'
+    if doc_type == 'Апс':
+        return safe_float(8), 'I'
+    return safe_float(6), 'G'
 
 
-def parse_xls(buf):
+def parse_xls(buf) -> dict:
+    """
+    Парсить XLS/XLSX файл звіту «Рух товарів».
+
+    Повертає:
+    {
+        'header': {'shop', 'warehouse', 'period_from', 'period_to', 'title', 'period'},
+        'articles': [{'article_id', 'name', 'price', 'total_in', 'total_out', 'balance_end'}],
+        'operations': [{'article_id', 'doc_type', 'doc_code', 'subdoc_type',
+                        'subdoc_code', 'direction', 'op_date', 'qty', 'col_source'}]
+    }
+    """
     # ── MIME-type validation ──────────────────────────────────────────────
     buf.seek(0)
     header_bytes = buf.read(4)
@@ -127,134 +170,124 @@ def parse_xls(buf):
         except Exception:
             return ''
 
-    # ── Шапка звіту ──────────────────────────────────────────────────────
-    header = {
-        'title':     cell(0, 0),
-        'shop':      cell(1, 3),
-        'period':    cell(1, 10),
-        'warehouse': cell(3, 3),
-    }
-    # Додатковий пошук Магазин:/Склад: якщо стандартні позиції порожні
-    if not header['shop'] or not header['warehouse']:
-        for r in range(min(20, len(df))):
-            for c in range(len(df.columns)):
-                val = str(df.iloc[r, c]).strip()
-                if not val or val == 'nan':
-                    continue
-                if 'Магазин:' in val and not header['shop']:
-                    if len(val) > 10:
-                        header['shop'] = val.replace('Магазин:', '').strip()
-                    else:
-                        for nc in range(c + 1, len(df.columns)):
-                            nval = str(df.iloc[r, nc]).strip()
-                            if nval and nval not in ('nan', '-'):
-                                header['shop'] = nval
-                                break
-                elif 'Склад:' in val and not header['warehouse']:
-                    if len(val) > 8:
-                        header['warehouse'] = val.replace('Склад:', '').strip()
-                    else:
-                        for nc in range(c + 1, len(df.columns)):
-                            nval = str(df.iloc[r, nc]).strip()
-                            if nval and nval not in ('nan', '-'):
-                                header['warehouse'] = nval
-                                break
-                if re.search(r'\d{2}\.\d{2}\.\d{2,4}\s+\d{1,2}:\d{2}', val):
-                    header['period'] = val
-
-    # ── Динамічний пошук фінансових колонок ──────────────────────────────
-    hdr_row, pryhid_col, rozkhid_col, inv_col = _find_financial_cols(df)
-    data_start = find_data_start(df, after_row=(hdr_row or 0))
-
-    def _get_float(row, col_idx):
-        if col_idx is None:
-            return 0.0
+    def safe_float_at(row, idx):
         try:
-            v = row.iloc[col_idx]
-            return float(v) if pd.notna(v) else 0.0
+            v = row.iloc[idx]
+            return float(v) if pd.notna(v) else None
         except Exception:
-            return 0.0
+            return None
 
-    data = []
-    i = data_start
-    cur_art, cur_name = None, ''
-    last_date = None
+    # ── Шапка звіту ──────────────────────────────────────────────────────
+    title      = cell(0, 0)
+    shop       = cell(1, 3)
+    period_str = cell(1, 10)
+    warehouse  = cell(3, 3)
 
-    while i < len(df):
+    period_from, period_to = _parse_period(period_str) if period_str else (None, None)
+
+    header = {
+        'title':       title,
+        'shop':        shop,
+        'warehouse':   warehouse,
+        'period':      period_str,
+        'period_from': period_from,
+        'period_to':   period_to,
+    }
+
+    # ── Основний цикл ────────────────────────────────────────────────────
+    articles: list = []
+    operations: list = []
+    cur_article = None
+    pending_op = None
+
+    for i in range(len(df)):
         row    = df.iloc[i]
         marker = row.iloc[0] if len(row) > 0 else None
-        col1   = str(row.iloc[1]).strip() if len(row) > 1 and pd.notna(row.iloc[1]) else ''
+        col_b  = str(row.iloc[1]).strip() if len(row) > 1 and pd.notna(row.iloc[1]) else ''
 
-        if marker == '+' and is_article_code(col1):
-            cur_art  = col1
-            cur_name = str(row.iloc[2]).strip() if len(row) > 2 and pd.notna(row.iloc[2]) else ''
-            i += 1
+        # Пропускаємо порожні рядки
+        if not col_b and marker not in ('+', '-'):
             continue
 
-        if marker == '-':
-            if is_article_code(col1):
-                cur_art  = col1
-                cur_name = str(row.iloc[2]).strip() if len(row) > 2 and pd.notna(row.iloc[2]) else cur_name
-                i += 1
+        # ── Рядок артикула (+) ────────────────────────────────────────────
+        if marker == '+' and is_article_code(col_b):
+            col_c = str(row.iloc[2]).strip() if len(row) > 2 and pd.notna(row.iloc[2]) else ''
+            cur_article = {
+                'article_id':  col_b,
+                'name':        col_c,
+                'price':       safe_float_at(row, 11),  # col L
+                'total_in':    safe_float_at(row, 6),   # col G
+                'total_out':   safe_float_at(row, 7),   # col H
+                'balance_end': safe_float_at(row, 9),   # col J
+            }
+            articles.append(cur_article)
+            pending_op = None
+            continue
+
+        # ── Рядки операцій (-) ────────────────────────────────────────────
+        if marker != '-' or cur_article is None:
+            continue
+
+        if not col_b:
+            continue
+
+        if _has_date(col_b):
+            # Основний документ — містить дату DD.MM.YY
+            pending_op = None
+            doc_type, doc_code = _extract_doc_type_code(col_b)
+            op_date = _extract_date(col_b)
+            qty, col_src = get_qty(row, doc_type)
+            if qty == 0:
                 continue
+            op = {
+                'article_id':  cur_article['article_id'],
+                'doc_type':    doc_type,
+                'doc_code':    doc_code,
+                'subdoc_type': None,
+                'subdoc_code': None,
+                'direction':   None,
+                'op_date':     op_date,
+                'qty':         qty,
+                'col_source':  col_src,
+            }
+            operations.append(op)
+            pending_op = op
 
-            op = _classify_operation(col1) if cur_art else None
-            if op:
-                pryhid_val  = _get_float(row, pryhid_col)
-                rozkhid_val = _get_float(row, rozkhid_col)
-                inv_val     = _get_float(row, inv_col)
-                qty = pryhid_val - rozkhid_val + inv_val
+        elif _is_subdoc(col_b):
+            # Піддокумент — немає дати, але є '/'
+            subdoc_type, subdoc_code, direction = classify_subdoc(col_b)
+            if pending_op is not None:
+                pending_op['subdoc_type'] = subdoc_type
+                pending_op['subdoc_code'] = subdoc_code
+                pending_op['direction']   = direction
+            pending_op = None
 
-                if qty == 0 and pryhid_val == 0 and rozkhid_val == 0 and inv_val == 0:
-                    i += 1
-                    continue
+    return {
+        'header':     header,
+        'articles':   articles,
+        'operations': operations,
+    }
 
-                m = re.search(r'(\d{2}\.\d{2}\.\d{2})', col1)
-                if m:
-                    try:
-                        last_date = pd.to_datetime(m.group(1), format='%d.%m.%y')
-                    except Exception as e:
-                        logging.warning(f"Рядок {i}: не вдалося розпізнати дату '{m.group(1)}': {e}")
-                d  = last_date
-                ym = f"{d.year}-{d.month:02d}" if d is not None else ''
 
-                data.append({
-                    'Артикул':    cur_art,
-                    'Назва':      cur_name,
-                    'Операція':   op,
-                    'Документ':   col1,
-                    'Дата':       d,
-                    'Рік-Місяць': ym,
-                    'Кількість':  qty,
-                    'Прихід':     pryhid_val,
-                    'Розхід':     rozkhid_val,
-                })
-        i += 1
+# ── Допоміжна функція для зворотної сумісності з app.py ──────────────────────
 
-    # ── Ціни (з '+'-рядків кожного артикулу) ─────────────────────────────
-    prices = {}
-    if inv_col is not None:
-        price_col = inv_col + 3
-    elif rozkhid_col is not None:
-        price_col = rozkhid_col + 4
-    else:
-        logging.warning(
-            "parse_xls: не вдалося визначити колонку ціни динамічно, використовується fallback price_col=11"
-        )
-        price_col = 11
-    for i2 in range(data_start, len(df)):
-        r2 = df.iloc[i2]
-        if r2.iloc[0] == '+' and is_article_code(str(r2.iloc[1]).strip()):
-            try:
-                p = float(r2.iloc[price_col])
-                if p > 0:
-                    prices[str(r2.iloc[1]).strip()] = p
-            except Exception:
-                try:
-                    p = float(r2.iloc[11])
-                    if p > 0:
-                        prices[str(r2.iloc[1]).strip()] = p
-                except Exception:
-                    pass
-
-    return header, pd.DataFrame(data), prices
+def op_display_name(doc_type: str, subdoc_type, direction) -> str:
+    """
+    Перетворює нові поля (doc_type, subdoc_type, direction) на назву операції
+    для builder.py (сумісність з ключами _OP_TO_COL).
+    """
+    if doc_type == 'ПрВ':
+        return 'ПрВ (Прихід)'
+    if doc_type == 'Кнк':
+        return 'Кнк (Продаж)'
+    if doc_type == 'СпП':
+        return 'СпП (Списання)'
+    if doc_type == 'ПрИ':
+        return 'ПрИ (Переміщення)'
+    if doc_type == 'Апс':
+        if subdoc_type == 'Ппт' and direction == 'від_нас':
+            return 'Ппт (Переміщення Розхід)'
+        if subdoc_type == 'Ппт' and direction == 'до_нас':
+            return 'Ппт (Переміщення Прихід)'
+        return 'Апк (Корегування)'
+    return 'Апк (Корегування)'
