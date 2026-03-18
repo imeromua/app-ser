@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Генератор звітів</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+        integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH"
+        crossorigin="anonymous">
+  <style>
+    body { background: #f0f4f8; }
+    .page-card {
+      border-radius: 12px !important;
+      box-shadow: 0 4px 18px rgba(0,0,0,.12) !important;
+      border: none;
+    }
+    .page-card .card-header {
+      background: #1F3864; color: #fff; font-weight: 700;
+      border-radius: 12px 12px 0 0 !important;
+    }
+    .section-label { font-weight: 700; color: #1F3864; margin-bottom: .6rem; font-size: .95rem; }
+    .period-btn { min-width: 80px; }
+  </style>
+</head>
+<body>
+<nav class="navbar navbar-dark mb-4" style="background:#1F3864;">
+  <div class="container">
+    <a href="/" class="btn btn-outline-light btn-sm me-3">← На головну</a>
+    <span class="navbar-brand mb-0 h5">📊 Генератор звітів</span>
+  </div>
+</nav>
+
+<div class="container pb-5" style="max-width:700px;">
+  {% if error %}
+  <div class="alert alert-danger">{{ error }}</div>
+  {% endif %}
+
+  <div class="card page-card">
+    <div class="card-header">🔍 Параметри звіту</div>
+    <div class="card-body">
+      <form method="post" action="/reports/generate">
+
+        <!-- Report type -->
+        <div class="mb-4">
+          <div class="section-label">Тип звіту</div>
+          <div class="btn-group w-100 flex-wrap" role="group">
+            <input type="radio" class="btn-check" name="report_type" id="rt_detail" value="detail" checked>
+            <label class="btn btn-outline-primary" for="rt_detail">📅 Детальний</label>
+            <input type="radio" class="btn-check" name="report_type" id="rt_summary" value="summary">
+            <label class="btn btn-outline-primary" for="rt_summary">📊 Сумарний</label>
+            <input type="radio" class="btn-check" name="report_type" id="rt_docs" value="document">
+            <label class="btn btn-outline-primary" for="rt_docs">📄 По документах</label>
+            <input type="radio" class="btn-check" name="report_type" id="rt_top" value="top_sales">
+            <label class="btn btn-outline-primary" for="rt_top">🏆 Топ продажів</label>
+            <input type="radio" class="btn-check" name="report_type" id="rt_zero" value="zero_balance">
+            <label class="btn btn-outline-primary" for="rt_zero">⚠️ Нульові залишки</label>
+          </div>
+        </div>
+
+        <!-- Quick period buttons -->
+        <div class="mb-3">
+          <div class="section-label">Період</div>
+          <div class="btn-group mb-2" role="group">
+            <button type="button" class="btn btn-outline-secondary period-btn" onclick="setPeriod('week')">Тиждень</button>
+            <button type="button" class="btn btn-outline-secondary period-btn" onclick="setPeriod('month')">Місяць</button>
+            <button type="button" class="btn btn-outline-secondary period-btn" onclick="setPeriod('quarter')">Квартал</button>
+            <button type="button" class="btn btn-outline-secondary period-btn" onclick="setPeriod('year')">Рік</button>
+            <button type="button" class="btn btn-outline-secondary period-btn" onclick="setPeriod('custom')">Свій</button>
+          </div>
+          <div id="date-fields" class="row g-2">
+            <div class="col-6">
+              <label class="form-label small text-muted">Від</label>
+              <input type="date" class="form-control" name="date_from" id="date_from" required>
+            </div>
+            <div class="col-6">
+              <label class="form-label small text-muted">До</label>
+              <input type="date" class="form-control" name="date_to" id="date_to" required>
+            </div>
+          </div>
+        </div>
+
+        <!-- Category filter -->
+        <div class="mb-4">
+          <div class="section-label">Фільтр категорії</div>
+          <select class="form-select" name="category">
+            <option value="all">Всі категорії</option>
+            <option value="Рибна продукція">Рибна продукція</option>
+            <option value="Молочна продукція">Молочна продукція</option>
+            <option value="Сирна продукція">Сирна продукція</option>
+            <option value="Ковбасна продукція">Ковбасна продукція</option>
+            <option value="Овочі та фрукти">Овочі та фрукти</option>
+            <option value="Алкогольні напої">Алкогольні напої</option>
+            <option value="Безалкогольні напої">Безалкогольні напої</option>
+            <option value="Бакалея">Бакалея</option>
+            <option value="Кондитерські вироби">Кондитерські вироби</option>
+            <option value="Цукерки та солодощі">Цукерки та солодощі</option>
+            <option value="Консерви">Консерви</option>
+            <option value="Напівфабрикати">Напівфабрикати</option>
+            <option value="Змішана продукція">Змішана продукція</option>
+          </select>
+        </div>
+
+        <!-- Format -->
+        <div class="mb-4">
+          <div class="section-label">Формат</div>
+          <div class="btn-group w-100" role="group">
+            <input type="radio" class="btn-check" name="format" id="fmt_html" value="html" checked>
+            <label class="btn btn-outline-secondary" for="fmt_html">🌐 HTML</label>
+            <input type="radio" class="btn-check" name="format" id="fmt_excel" value="excel">
+            <label class="btn btn-outline-secondary" for="fmt_excel">💾 Excel</label>
+            <input type="radio" class="btn-check" name="format" id="fmt_pdf" value="pdf">
+            <label class="btn btn-outline-secondary" for="fmt_pdf">📄 PDF</label>
+          </div>
+        </div>
+
+        <button type="submit" class="btn btn-danger w-100 py-2 fw-bold fs-5">🔍 Сформувати звіт</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
+        integrity="sha384-YvpcrYf0tY3lHB60NNkmXc4s9bIOgUxi8T/jzmNNKHNQn3TXFrKzuAMC3bBKNmW"
+        crossorigin="anonymous"></script>
+<script>
+function pad(n){ return String(n).padStart(2,'0'); }
+function fmtDate(d){ return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate()); }
+
+function setPeriod(type) {
+  const today = new Date();
+  let from, to = fmtDate(today);
+  if (type === 'week') {
+    const w = new Date(today); w.setDate(today.getDate() - 6);
+    from = fmtDate(w);
+  } else if (type === 'month') {
+    from = fmtDate(new Date(today.getFullYear(), today.getMonth(), 1));
+  } else if (type === 'quarter') {
+    const q = Math.floor(today.getMonth() / 3);
+    from = fmtDate(new Date(today.getFullYear(), q * 3, 1));
+  } else if (type === 'year') {
+    from = fmtDate(new Date(today.getFullYear(), 0, 1));
+  } else {
+    // custom — just show fields, don't change values
+    document.getElementById('date_from').focus();
+    return;
+  }
+  document.getElementById('date_from').value = from;
+  document.getElementById('date_to').value = to;
+}
+
+// Set default to current month
+setPeriod('month');
+</script>
+</body>
+</html>

@@ -2,3 +2,12 @@ __pycache__/
 *.pyc
 *.pyo
 .env
+venv/
+.venv/
+uploads/
+tmp/
+*.log
+*.db
+*.sqlite
+instance/
+.DS_Store

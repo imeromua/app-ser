@@ -1,92 +1,133 @@
 <!DOCTYPE html>
 <html lang="uk">
 <head>
-  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Рух товарів — аналіз</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Рух товарів — Головна</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+        integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH"
+        crossorigin="anonymous">
   <style>
-    body{background:#f0f4f8}
-    .upload-area{border:2.5px dashed #4472C4;border-radius:12px;padding:40px 24px;text-align:center;
-      cursor:pointer;transition:.25s;background:#fff}
-    .upload-area:hover,.upload-area.drag{background:#e8effc;border-color:#1F3864}
-    .upload-icon{font-size:48px}
-    .upload-card{max-width:500px;margin:0 auto;border-radius:12px!important;
-      box-shadow:0 4px 18px rgba(0,0,0,.12)!important}
-    .upload-card .card-header{background:#1F3864;color:#fff;font-weight:700;border-radius:12px 12px 0 0!important}
-    .info-card{max-width:500px;margin:0 auto;border-radius:12px!important;
-      box-shadow:0 2px 10px rgba(0,0,0,.08)!important;background:#fff;border:none}
-    .info-card .card-body{padding:20px 24px}
-    .info-card h6{color:#1F3864;font-weight:700;font-size:1rem}
-    .feature-item{display:flex;align-items:flex-start;gap:8px;margin-bottom:6px;font-size:.9rem;color:#333}
-    .feature-item .emoji{flex-shrink:0;font-size:1rem}
+    body { background: #f0f4f8; }
+    .nav-brand { color: #fff !important; font-weight: 700; font-size: 1.2rem; }
+    .main-card {
+      border: none;
+      border-radius: 16px;
+      box-shadow: 0 4px 20px rgba(0,0,0,.12);
+      transition: transform .2s, box-shadow .2s;
+      cursor: pointer;
+      text-decoration: none;
+      color: inherit;
+      display: block;
+    }
+    .main-card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 8px 32px rgba(0,0,0,.18);
+      color: inherit;
+    }
+    .main-card .card-body { padding: 2.5rem 2rem; text-align: center; }
+    .main-card .card-icon { font-size: 3.5rem; margin-bottom: 1rem; }
+    .main-card .card-title { font-size: 1.4rem; font-weight: 700; color: #1F3864; margin-bottom: .5rem; }
+    .main-card .card-text { color: #555; font-size: .95rem; }
+    .card-import  { border-top: 5px solid #1F3864; }
+    .card-reports { border-top: 5px solid #C0392B; }
+    .card-inventory { border-top: 5px solid #27ae60; }
+    .stats-card {
+      border-radius: 12px;
+      border: none;
+      box-shadow: 0 2px 10px rgba(0,0,0,.08);
+    }
+    .stat-item { text-align: center; padding: 1rem; }
+    .stat-value { font-size: 2rem; font-weight: 700; color: #1F3864; }
+    .stat-label { color: #888; font-size: .85rem; }
+    .hero-title { color: #1F3864; font-weight: 800; }
+    .hero-subtitle { color: #666; }
   </style>
 </head>
 <body>
-<div class="container py-4">
-  <div class="text-center mb-4">
-    <h2 class="fw-bold text-danger">📦 Рух товарів кількісний</h2>
-    <p class="text-muted">Завантажте XLS-файл звіту EPI — отримайте зведену таблицю з підсумками та сумами залишків</p>
+<nav class="navbar navbar-dark" style="background:#1F3864;">
+  <div class="container">
+    <span class="nav-brand">📦 Рух товарів кількісний</span>
+  </div>
+</nav>
+
+<div class="container py-5">
+  <!-- Hero -->
+  <div class="text-center mb-5">
+    <h1 class="hero-title display-5">Аналіз руху товарів</h1>
+    <p class="hero-subtitle fs-5">Система управління та аналізу товарних операцій</p>
   </div>
 
-  <!-- Блок опису системи -->
-  <div class="card info-card mb-4">
-    <div class="card-body">
-      <h6>📊 Про систему аналізу «Рух товарів»</h6>
-      <p class="text-muted small mb-3">Цей інструмент створений для швидкої та автоматизованої обробки звітів у форматах XLS та XLSX.</p>
-      <p class="fw-semibold mb-2" style="font-size:.9rem;color:#1F3864">✨ Що вміє система:</p>
-      <div class="feature-item"><span class="emoji">🗂️</span><span>Розпізнавати та об'єднувати дані з декількох файлів одночасно.</span></div>
-      <div class="feature-item"><span class="emoji">🏷️</span><span>Коректно класифікувати всі типи операцій: прихід (ПрВ), продажі (Кнк), переміщення (ПрИ/Ппт), списання (СпП/СпО) та акти пересорту (Апс/Апк).</span></div>
-      <div class="feature-item"><span class="emoji">🧮</span><span>Автоматично вираховувати точні залишки та фінансові суми.</span></div>
-      <div class="feature-item"><span class="emoji">📑</span><span>Генерувати 3 види звітів: <strong>Детальний</strong> (по місяцях), <strong>Сумарний</strong> (загальний підсумок) та <strong>По документах</strong> (хронологія кожної операції).</span></div>
-      <div class="feature-item"><span class="emoji">💾</span><span>Експортувати результати у готові для друку <strong>PDF-файли</strong> або зручні таблиці <strong>Excel</strong>.</span></div>
+  <!-- Three main cards -->
+  <div class="row g-4 mb-5">
+    <div class="col-md-4">
+      <a href="/import" class="main-card card card-import">
+        <div class="card-body">
+          <div class="card-icon">📥</div>
+          <div class="card-title">Імпорт</div>
+          <div class="card-text">Завантажити XLS-файл для оновлення бази даних</div>
+        </div>
+      </a>
+    </div>
+    <div class="col-md-4">
+      <a href="/reports" class="main-card card card-reports">
+        <div class="card-body">
+          <div class="card-icon">📊</div>
+          <div class="card-title">Звіти</div>
+          <div class="card-text">Генерувати звіти з бази даних за будь-який період</div>
+        </div>
+      </a>
+    </div>
+    <div class="col-md-4">
+      <a href="/inventory" class="main-card card card-inventory">
+        <div class="card-body">
+          <div class="card-icon">📋</div>
+          <div class="card-title">Відомості</div>
+          <div class="card-text">Шаблони інвентаризації з поточними залишками</div>
+        </div>
+      </a>
     </div>
   </div>
 
-  <!-- Форма завантаження -->
-  <div class="card upload-card">
-    <div class="card-header">📂 Завантаження файлу</div>
+  <!-- Stats block -->
+  <div class="card stats-card">
     <div class="card-body">
-      <form id="form" action="/upload" method="post" enctype="multipart/form-data">
-        <div class="upload-area" id="drop" onclick="document.getElementById('fi').click()">
-          <div class="upload-icon">📊</div>
-          <p class="fs-5 mt-2 mb-1 fw-semibold">Перетягніть XLS-файл сюди</p>
-          <p class="text-muted small">або натисніть щоб обрати</p>
-          <p id="fn" class="text-success fw-semibold mt-2"></p>
+      <h6 class="text-muted text-uppercase fw-semibold mb-3" style="font-size:.8rem;letter-spacing:1px;">
+        📈 Статистика бази даних
+      </h6>
+      <div class="row" id="stats-row">
+        <div class="col-4 stat-item">
+          <div class="stat-value" id="stat-articles">—</div>
+          <div class="stat-label">Артикулів</div>
         </div>
-        <input type="file" id="fi" name="files" accept=".xls,.xlsx" class="d-none" multiple>
-        <div class="btn-group w-100 mt-3" role="group">
-          <input type="radio" class="btn-check" name="report_type" id="rt_detail" value="detail" checked>
-          <label class="btn btn-outline-primary" for="rt_detail">
-            📅 Детальний (по місяцях)
-          </label>
-          <input type="radio" class="btn-check" name="report_type" id="rt_summary" value="summary">
-          <label class="btn btn-outline-success" for="rt_summary">
-            📊 Сумарний (без місяців)
-          </label>
-          <input type="radio" class="btn-check" name="report_type" id="rt_document" value="document">
-          <label class="btn btn-outline-warning" for="rt_document">
-            📄 По документах
-          </label>
+        <div class="col-4 stat-item">
+          <div class="stat-value" id="stat-operations">—</div>
+          <div class="stat-label">Операцій</div>
         </div>
-        <div id="spin" class="mt-3 text-center d-none">
-          <div class="spinner-border text-primary me-2" role="status"></div>
-          <span>Обробляємо файл...</span>
+        <div class="col-4 stat-item">
+          <div class="stat-value" id="stat-last-import">—</div>
+          <div class="stat-label">Останній імпорт</div>
         </div>
-        <button type="submit" id="btn" class="btn btn-primary w-100 mt-3" disabled>🔍 Аналізувати</button>
-      </form>
-      {% if error %}<div class="alert alert-danger mt-3">{{ error }}</div>{% endif %}
+      </div>
     </div>
   </div>
 </div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
+        integrity="sha384-YvpcrYf0tY3lHB60NNkmXc4s9bIOgUxi8T/jzmNNKHNQn3TXFrKzuAMC3bBKNmW"
+        crossorigin="anonymous"></script>
 <script>
-const drop=document.getElementById('drop'),fi=document.getElementById('fi'),
-      btn=document.getElementById('btn'),fn=document.getElementById('fn'),
-      form=document.getElementById('form'),spin=document.getElementById('spin');
-fi.addEventListener('change',()=>{if(fi.files.length){fn.textContent='\u2713 '+Array.from(fi.files).map(f=>f.name).join(', ');btn.disabled=false;}});
-['dragenter','dragover'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.add('drag');}));
-['dragleave','drop'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.remove('drag');}));
-drop.addEventListener('drop',ev=>{const files=ev.dataTransfer.files;if(files.length){const dt=new DataTransfer();
-  Array.from(files).forEach(f=>dt.items.add(f));fi.files=dt.files;fn.textContent='\u2713 '+Array.from(files).map(f=>f.name).join(', ');btn.disabled=false;}});
-form.addEventListener('submit',()=>{spin.classList.remove('d-none');btn.disabled=true;});
+fetch('/api/stats')
+  .then(r => r.json())
+  .then(d => {
+    document.getElementById('stat-articles').textContent =
+      d.articles != null ? d.articles.toLocaleString('uk-UA') : '—';
+    document.getElementById('stat-operations').textContent =
+      d.operations != null ? d.operations.toLocaleString('uk-UA') : '—';
+    document.getElementById('stat-last-import').textContent =
+      d.last_import || '—';
+  })
+  .catch(() => {});
 </script>
-</body></html>
+</body>
+</html>
