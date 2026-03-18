@@ -27,6 +27,10 @@
   <div class="container">
     <a href="/" class="btn btn-outline-light btn-sm me-3">← На головну</a>
     <span class="navbar-brand mb-0 h5">📊 Генератор звітів</span>
+    <div class="ms-auto d-flex gap-2">
+      <a href="/import" class="btn btn-outline-light btn-sm">📥 Імпорт</a>
+      <a href="/inventory" class="btn btn-outline-light btn-sm">📋 Відомості</a>
+    </div>
   </div>
 </nav>
 
@@ -38,18 +42,16 @@
   <div class="card page-card">
     <div class="card-header">🔍 Параметри звіту</div>
     <div class="card-body">
-      <form method="post" action="/reports/generate">
+      <form id="reports-form" method="post" action="/reports/generate">
 
         <!-- Report type -->
         <div class="mb-4">
           <div class="section-label">Тип звіту</div>
           <div class="btn-group w-100 flex-wrap" role="group">
-            <input type="radio" class="btn-check" name="report_type" id="rt_detail" value="detail" checked>
-            <label class="btn btn-outline-primary" for="rt_detail">📅 Детальний</label>
-            <input type="radio" class="btn-check" name="report_type" id="rt_summary" value="summary">
+            <input type="radio" class="btn-check" name="report_type" id="rt_summary" value="summary" checked>
             <label class="btn btn-outline-primary" for="rt_summary">📊 Сумарний</label>
-            <input type="radio" class="btn-check" name="report_type" id="rt_docs" value="document">
-            <label class="btn btn-outline-primary" for="rt_docs">📄 По документах</label>
+            <input type="radio" class="btn-check" name="report_type" id="rt_inventory" value="inventory">
+            <label class="btn btn-outline-primary" for="rt_inventory">📦 Інвентаризація</label>
             <input type="radio" class="btn-check" name="report_type" id="rt_top" value="top_sales">
             <label class="btn btn-outline-primary" for="rt_top">🏆 Топ продажів</label>
             <input type="radio" class="btn-check" name="report_type" id="rt_zero" value="zero_balance">
@@ -113,7 +115,14 @@
           </div>
         </div>
 
-        <button type="submit" class="btn btn-danger w-100 py-2 fw-bold fs-5">🔍 Сформувати звіт</button>
+        <button type="submit" id="submit-btn" class="btn btn-danger w-100 py-2 fw-bold fs-5">🔍 Сформувати звіт</button>
+        <div id="pdf-spinner" class="mt-3 text-center d-none">
+          <div class="spinner-border text-danger me-2" role="status">
+            <span class="visually-hidden">Завантаження...</span>
+          </div>
+          <span>Генеруємо PDF...</span>
+        </div>
+        <div id="pdf-error" class="mt-3 alert alert-danger d-none"></div>
       </form>
     </div>
   </div>
@@ -150,6 +159,72 @@ function setPeriod(type) {
 
 // Set default to current month
 setPeriod('month');
+
+document.getElementById('reports-form').addEventListener('submit', function(e) {
+  const fmt = document.querySelector('input[name="format"]:checked')?.value;
+  if (fmt !== 'pdf') return; // let normal form submit handle HTML and Excel
+
+  e.preventDefault();
+  const btn = document.getElementById('submit-btn');
+  const spinner = document.getElementById('pdf-spinner');
+  const errDiv = document.getElementById('pdf-error');
+  btn.disabled = true;
+  spinner.classList.remove('d-none');
+  errDiv.classList.add('d-none');
+
+  const formData = new FormData(this);
+  fetch('/reports/generate', { method: 'POST', body: formData })
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) throw new Error(data.error);
+      return fetch('/export/pdf/start', { method: 'POST' });
+    })
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) throw new Error(data.error);
+      return pollPdf(data.task_id);
+    })
+    .catch(err => {
+      spinner.classList.add('d-none');
+      btn.disabled = false;
+      errDiv.textContent = 'Помилка: ' + err.message;
+      errDiv.classList.remove('d-none');
+    });
+});
+
+function pollPdf(taskId, attempts) {
+  attempts = (attempts || 0) + 1;
+  if (attempts > 120) {
+    document.getElementById('pdf-spinner').classList.add('d-none');
+    document.getElementById('submit-btn').disabled = false;
+    const errDiv = document.getElementById('pdf-error');
+    errDiv.textContent = 'Помилка: перевищено час очікування PDF';
+    errDiv.classList.remove('d-none');
+    return Promise.resolve();
+  }
+  return fetch('/export/pdf/status/' + taskId)
+    .then(r => {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    })
+    .then(data => {
+      if (data.status === 'ready') {
+        window.location = '/export/pdf/result/' + taskId;
+        document.getElementById('pdf-spinner').classList.add('d-none');
+        document.getElementById('submit-btn').disabled = false;
+        return;
+      }
+      if (data.status === 'error') throw new Error(data.error || 'PDF generation failed');
+      return new Promise(resolve => setTimeout(resolve, 1000)).then(() => pollPdf(taskId, attempts));
+    })
+    .catch(err => {
+      document.getElementById('pdf-spinner').classList.add('d-none');
+      document.getElementById('submit-btn').disabled = false;
+      const errDiv = document.getElementById('pdf-error');
+      errDiv.textContent = 'Помилка: ' + err.message;
+      errDiv.classList.remove('d-none');
+    });
+}
 </script>
 </body>
 </html>

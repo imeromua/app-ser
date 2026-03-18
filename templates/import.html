@@ -25,6 +25,9 @@
     }
     .table-imports th { background: #1F3864; color: #fff; }
     .badge-strategy { font-size: .75rem; }
+    .strategy-FULL_INSERT { background: #27ae60 !important; }
+    .strategy-DELTA_INSERT { background: #2980b9 !important; }
+    .strategy-SKIP { background: #7f8c8d !important; }
   </style>
 </head>
 <body>
@@ -32,42 +35,76 @@
   <div class="container">
     <a href="/" class="btn btn-outline-light btn-sm me-3">← На головну</a>
     <span class="navbar-brand mb-0 h5">📥 Імпорт файлів</span>
+    <div class="ms-auto d-flex gap-2">
+      <a href="/reports" class="btn btn-outline-light btn-sm">📊 Звіти</a>
+      <a href="/inventory" class="btn btn-outline-light btn-sm">📋 Відомості</a>
+    </div>
   </div>
 </nav>
 
 <div class="container pb-5">
+  {% if error %}
+  <div class="alert alert-danger alert-dismissible fade show" role="alert">
+    ⚠️ {{ error }}
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+  </div>
+  {% endif %}
+
+  {% if import_results %}
+  <div class="mb-4">
+    {% for item in import_results %}
+    {% set r = item.result %}
+    {% if r.strategy == 'SKIP' %}
+    <div class="alert alert-warning">
+      <strong>⏭ Пропущено:</strong> {{ item.filename }} —
+      Файл вже є в базі (period_to={{ r.period_to }}, db_max={{ r.db_max_date }})
+    </div>
+    {% else %}
+    <div class="alert alert-success">
+      <strong>✅ Імпортовано:</strong> {{ item.filename }} —
+      Стратегія: <strong>{{ r.strategy }}</strong>,
+      Артикулів: <strong>{{ r.articles_count }}</strong>,
+      Операцій: <strong>{{ r.ops_inserted }}</strong>
+      {% if r.invalid_snapshots %}<br>⚠️ Розбіжності: {{ r.invalid_snapshots|length }} артикулів{% endif %}
+    </div>
+    {% endif %}
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if import_errors %}
+  <div class="mb-4">
+    {% for item in import_errors %}
+    <div class="alert alert-danger">
+      <strong>❌ Помилка:</strong> {{ item.filename }} — {{ item.error }}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
   <!-- Upload card -->
   <div class="card page-card mb-4">
-    <div class="card-header">📂 Завантаження XLS-файлу</div>
+    <div class="card-header">📂 Завантаження XLS-файлу до бази даних</div>
     <div class="card-body">
-      <form id="form" action="/upload" method="post" enctype="multipart/form-data">
+      <form id="form" action="/import/upload" method="post" enctype="multipart/form-data">
         <div class="upload-area" id="drop" onclick="document.getElementById('fi').click()">
           <div class="upload-icon">📊</div>
           <p class="fs-5 mt-2 mb-1 fw-semibold">Перетягніть XLS-файл сюди</p>
-          <p class="text-muted small">або натисніть щоб обрати</p>
+          <p class="text-muted small">або натисніть щоб обрати (підтримується декілька файлів)</p>
           <p id="fn" class="text-success fw-semibold mt-2"></p>
         </div>
         <input type="file" id="fi" name="files" accept=".xls,.xlsx" class="d-none" multiple>
-        <div class="btn-group w-100 mt-3" role="group">
-          <input type="radio" class="btn-check" name="report_type" id="rt_detail" value="detail" checked>
-          <label class="btn btn-outline-primary" for="rt_detail">📅 Детальний (по місяцях)</label>
-          <input type="radio" class="btn-check" name="report_type" id="rt_summary" value="summary">
-          <label class="btn btn-outline-success" for="rt_summary">📊 Сумарний</label>
-          <input type="radio" class="btn-check" name="report_type" id="rt_document" value="document">
-          <label class="btn btn-outline-warning" for="rt_document">📄 По документах</label>
-        </div>
         <div id="spin" class="mt-3 text-center d-none">
-          <div class="spinner-border text-primary me-2" role="status"></div>
-          <span>Обробляємо файл...</span>
+          <div class="spinner-border text-primary me-2" role="status">
+            <span class="visually-hidden">Завантаження...</span>
+          </div>
+          <span>Імпортуємо файл до бази даних...</span>
         </div>
-        <button type="submit" id="btn" class="btn btn-primary w-100 mt-3" disabled>🔍 Аналізувати та зберегти</button>
+        <button type="submit" id="btn" class="btn btn-primary w-100 mt-3 py-2 fs-5 fw-bold" disabled>
+          📥 Імпортувати до бази даних
+        </button>
       </form>
     </div>
-  </div>
-
-  <!-- Result block (shown after successful upload) -->
-  <div id="result-block" class="d-none mb-4">
-    <div class="alert alert-success" id="result-msg"></div>
   </div>
 
   <!-- Import log -->

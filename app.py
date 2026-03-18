@@ -490,6 +490,32 @@ def import_page():
     return render_template('import.html')
 
 
+@app.route('/import/upload', methods=['POST'])
+def import_upload():
+    """DB-only import: парсить XLS та записує до PostgreSQL, показує результат інлайн."""
+    files = request.files.getlist('files')
+    if not files or all(not f.filename for f in files):
+        return render_template('import.html', error='Файл не знайдено')
+
+    import_results = []
+    import_errors = []
+    for f in files:
+        if not f.filename:
+            continue
+        raw = f.read()
+        fname = secure_filename(f.filename)
+        try:
+            result = run_import(io.BytesIO(raw), fname)
+            import_results.append({'filename': fname, 'result': result})
+        except Exception as e:
+            logging.exception('import_upload failed for %s', fname)
+            import_errors.append({'filename': fname, 'error': str(e)})
+
+    return render_template('import.html',
+                           import_results=import_results,
+                           import_errors=import_errors)
+
+
 @app.route('/reports')
 def reports_page():
     return render_template('reports_form.html')
