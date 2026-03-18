@@ -74,6 +74,10 @@
   </style>
 </head>
 <body>
+{%- macro qty_val(v, iw) -%}
+  {%- if iw -%}{{ "%.3f"|format(v|float) }}{%- else -%}{{ v|int }}{%- endif -%}
+{%- endmacro -%}
+{%- macro qty_unit(iw) -%}{%- if iw -%}кг{%- else -%}шт{%- endif -%}{%- endmacro -%}
 
 <h1>{{ header.title }}</h1>
 <div class="meta">
@@ -123,10 +127,10 @@
         <td class="ctr">{{ row.Дата }}</td>
         <td>{{ row.Операція }}</td>
         <td>{{ row.Документ[:55] }}{{ '…' if row.Документ|length > 55 else '' }}</td>
-        <td class="num">{% if row.Прихід != '' %}<span class="value">{{ "%.2f"|format(row.Прихід|float) }}</span><br><span class="unit">шт (кг)</span>{% endif %}</td>
-        <td class="num">{% if row.Розхід != '' %}<span class="value">{{ "%.2f"|format(row.Розхід|float) }}</span><br><span class="unit">шт (кг)</span>{% endif %}</td>
-        <td class="num"><span class="value">{{ "%.2f"|format(row.Кількість|float) }}</span><br><span class="unit">шт (кг)</span></td>
-        <td class="num"><span class="value">{{ "%.2f"|format(row.Залишок|float) }}</span><br><span class="unit">шт (кг)</span></td>
+        <td class="num">{% if row.Прихід != '' %}<span class="value">{{ qty_val(row.Прихід, row.is_weighted) }}</span><br><span class="unit">{{ qty_unit(row.is_weighted) }}</span>{% endif %}</td>
+        <td class="num">{% if row.Розхід != '' %}<span class="value">{{ qty_val(row.Розхід, row.is_weighted) }}</span><br><span class="unit">{{ qty_unit(row.is_weighted) }}</span>{% endif %}</td>
+        <td class="num"><span class="value">{{ qty_val(row.Кількість, row.is_weighted) }}</span><br><span class="unit">{{ qty_unit(row.is_weighted) }}</span></td>
+        <td class="num"><span class="value">{{ qty_val(row.Залишок, row.is_weighted) }}</span><br><span class="unit">{{ qty_unit(row.is_weighted) }}</span></td>
       </tr>
     {% endif %}
   {% endfor %}
@@ -162,12 +166,12 @@
       <tr class="summary-row">
         <td>{{ row.Артикул }}</td>
         <td>{{ row.Назва[:50] }}{{ '…' if row.Назва|length > 50 else '' }}</td>
-        <td class="num">{% if row.ПрВ %}<span class="value">{{ "%.2f"|format(row.ПрВ|float) }}</span><br><span class="unit">шт (кг)</span>{% endif %}</td>
-        <td class="num">{% if row.Кнк %}<span class="value">{{ "%.2f"|format(row.Кнк|float) }}</span><br><span class="unit">шт (кг)</span>{% endif %}</td>
-        <td class="num">{% if row.ПрИ %}<span class="value">{{ "%.2f"|format(row.ПрИ|float) }}</span><br><span class="unit">шт (кг)</span>{% endif %}</td>
-        <td class="num">{% if row.СпП %}<span class="value">{{ "%.2f"|format(row.СпП|float) }}</span><br><span class="unit">шт (кг)</span>{% endif %}</td>
-        <td class="num">{% if row.Апс %}<span class="value">{{ "%.2f"|format(row.Апс|float) }}</span><br><span class="unit">шт (кг)</span>{% endif %}</td>
-        <td class="num"><span class="value">{{ "%.2f"|format(row.Залишок|float) }}</span><br><span class="unit">шт (кг)</span></td>
+        <td class="num">{% if row.ПрВ %}<span class="value">{{ qty_val(row.ПрВ, row.is_weighted) }}</span><br><span class="unit">{{ qty_unit(row.is_weighted) }}</span>{% endif %}</td>
+        <td class="num">{% if row.Кнк %}<span class="value">{{ qty_val(row.Кнк, row.is_weighted) }}</span><br><span class="unit">{{ qty_unit(row.is_weighted) }}</span>{% endif %}</td>
+        <td class="num">{% if row.ПрИ %}<span class="value">{{ qty_val(row.ПрИ, row.is_weighted) }}</span><br><span class="unit">{{ qty_unit(row.is_weighted) }}</span>{% endif %}</td>
+        <td class="num">{% if row.СпП %}<span class="value">{{ qty_val(row.СпП, row.is_weighted) }}</span><br><span class="unit">{{ qty_unit(row.is_weighted) }}</span>{% endif %}</td>
+        <td class="num">{% if row.Апс %}<span class="value">{{ qty_val(row.Апс, row.is_weighted) }}</span><br><span class="unit">{{ qty_unit(row.is_weighted) }}</span>{% endif %}</td>
+        <td class="num"><span class="value">{{ qty_val(row.Залишок, row.is_weighted) }}</span><br><span class="unit">{{ qty_unit(row.is_weighted) }}</span></td>
         <td class="num">{{ "%.2f"|format(row.Ціна|float) if row.Ціна != '' else '' }}</td>
         <td class="num">{% if row.Сума != '' %}<span class="value">{{ "%.2f"|format(row.Сума|float) }}</span><br><span class="unit">грн</span>{% endif %}</td>
       </tr>
@@ -210,12 +214,12 @@
         <td>{{ row.Артикул }}</td>
         <td>▶ {{ row.Назва[:48] }}{{ '…' if row.Назва|length > 48 else '' }}</td>
         <td class="ctr">{{ row.Місяць }}</td>
-        <td class="num"><span class="value">{{ "%.2f"|format(row.ПрВ|float) }}</span><br><span class="unit">шт (кг)</span></td>
-        <td class="num"><span class="value">{{ "%.2f"|format(row.Кнк|float) }}</span><br><span class="unit">шт (кг)</span></td>
-        <td class="num">{% if row.ПрИ %}<span class="value">{{ "%.2f"|format(row.ПрИ|float) }}</span><br><span class="unit">шт (кг)</span>{% endif %}</td>
-        <td class="num">{% if row.СпП %}<span class="value">{{ "%.2f"|format(row.СпП|float) }}</span><br><span class="unit">шт (кг)</span>{% endif %}</td>
-        <td class="num">{% if row.Апс %}<span class="value">{{ "%.2f"|format(row.Апс|float) }}</span><br><span class="unit">шт (кг)</span>{% endif %}</td>
-        <td class="num"><span class="value">{{ "%.2f"|format(row.Залишок|float) }}</span><br><span class="unit">шт (кг)</span></td>
+        <td class="num"><span class="value">{{ qty_val(row.ПрВ, row.is_weighted) }}</span><br><span class="unit">{{ qty_unit(row.is_weighted) }}</span></td>
+        <td class="num"><span class="value">{{ qty_val(row.Кнк, row.is_weighted) }}</span><br><span class="unit">{{ qty_unit(row.is_weighted) }}</span></td>
+        <td class="num">{% if row.ПрИ %}<span class="value">{{ qty_val(row.ПрИ, row.is_weighted) }}</span><br><span class="unit">{{ qty_unit(row.is_weighted) }}</span>{% endif %}</td>
+        <td class="num">{% if row.СпП %}<span class="value">{{ qty_val(row.СпП, row.is_weighted) }}</span><br><span class="unit">{{ qty_unit(row.is_weighted) }}</span>{% endif %}</td>
+        <td class="num">{% if row.Апс %}<span class="value">{{ qty_val(row.Апс, row.is_weighted) }}</span><br><span class="unit">{{ qty_unit(row.is_weighted) }}</span>{% endif %}</td>
+        <td class="num"><span class="value">{{ qty_val(row.Залишок, row.is_weighted) }}</span><br><span class="unit">{{ qty_unit(row.is_weighted) }}</span></td>
         <td class="num">{{ "%.2f"|format(row.Ціна|float) if row.Ціна != '' else '' }}</td>
         <td class="num">{% if row.Сума != '' %}<span class="value">{{ "%.2f"|format(row.Сума|float) }}</span><br><span class="unit">грн</span>{% endif %}</td>
       </tr>
@@ -224,12 +228,12 @@
         <td>{{ row.Артикул }}</td>
         <td>{{ row.Назва[:50] }}{{ '…' if row.Назва|length > 50 else '' }}</td>
         <td class="ctr">{{ row.Місяць }}</td>
-        <td class="num">{% if row.ПрВ %}<span class="value">{{ "%.2f"|format(row.ПрВ|float) }}</span><br><span class="unit">шт (кг)</span>{% endif %}</td>
-        <td class="num">{% if row.Кнк %}<span class="value">{{ "%.2f"|format(row.Кнк|float) }}</span><br><span class="unit">шт (кг)</span>{% endif %}</td>
-        <td class="num">{% if row.ПрИ %}<span class="value">{{ "%.2f"|format(row.ПрИ|float) }}</span><br><span class="unit">шт (кг)</span>{% endif %}</td>
-        <td class="num">{% if row.СпП %}<span class="value">{{ "%.2f"|format(row.СпП|float) }}</span><br><span class="unit">шт (кг)</span>{% endif %}</td>
-        <td class="num">{% if row.Апс %}<span class="value">{{ "%.2f"|format(row.Апс|float) }}</span><br><span class="unit">шт (кг)</span>{% endif %}</td>
-        <td class="num"><span class="value">{{ "%.2f"|format(row.Залишок|float) }}</span><br><span class="unit">шт (кг)</span></td>
+        <td class="num">{% if row.ПрВ %}<span class="value">{{ qty_val(row.ПрВ, row.is_weighted) }}</span><br><span class="unit">{{ qty_unit(row.is_weighted) }}</span>{% endif %}</td>
+        <td class="num">{% if row.Кнк %}<span class="value">{{ qty_val(row.Кнк, row.is_weighted) }}</span><br><span class="unit">{{ qty_unit(row.is_weighted) }}</span>{% endif %}</td>
+        <td class="num">{% if row.ПрИ %}<span class="value">{{ qty_val(row.ПрИ, row.is_weighted) }}</span><br><span class="unit">{{ qty_unit(row.is_weighted) }}</span>{% endif %}</td>
+        <td class="num">{% if row.СпП %}<span class="value">{{ qty_val(row.СпП, row.is_weighted) }}</span><br><span class="unit">{{ qty_unit(row.is_weighted) }}</span>{% endif %}</td>
+        <td class="num">{% if row.Апс %}<span class="value">{{ qty_val(row.Апс, row.is_weighted) }}</span><br><span class="unit">{{ qty_unit(row.is_weighted) }}</span>{% endif %}</td>
+        <td class="num"><span class="value">{{ qty_val(row.Залишок, row.is_weighted) }}</span><br><span class="unit">{{ qty_unit(row.is_weighted) }}</span></td>
         <td></td><td></td>
       </tr>
     {% endif %}

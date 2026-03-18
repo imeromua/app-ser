@@ -30,6 +30,22 @@ _OP_IS_ROZKHID = {
 # Апк (Корегування) — може бути + або −, визначаємо по знаку qty
 
 
+# Precision for weighted-item quantities (decimal places shown in UI and used in rounding)
+_QTY_PRECISION = 3
+
+
+def _is_weighted(qty_series) -> bool:
+    """True якщо хоч одне qty в серії має дробову частину — товар є ваговим (кг)."""
+    for q in qty_series:
+        try:
+            v = float(q)
+            if abs(v - round(v)) > 1e-9:
+                return True
+        except (TypeError, ValueError):
+            pass
+    return False
+
+
 def _doc_pryhid_rozkhid(op_name: str, qty: float):
     """
     Повертає (pryhid_val, rozkhid_val) для звіту «По документах».
@@ -58,8 +74,8 @@ def _agg_cols(df_slice):
       - ПрИ, Апс       → знакова сума, може бути від'ємною
         (наприклад, Апс = -4 означає нестачу при пересорті)
 
-    Примітка: int() у Python не обрізує від'ємне — int(-4.7) == -4 (усічення до нуля),
-    тому від'ємні значення ПрИ і Апс коректно зберігаються.
+    Значення зберігаються як float з точністю до 3 знаків, щоб не втрачати
+    дробову частину вагових товарів (наприклад 2.286 кг).
     """
     totals = {'ПрВ': 0, 'Кнк': 0, 'ПрИ': 0, 'СпП': 0, 'Апс': 0}
     for op, col in _OP_TO_COL.items():
@@ -71,7 +87,7 @@ def _agg_cols(df_slice):
         else:
             # ПрИ та Апс — знакові: від'ємне значення є значущим
             totals[col] += s
-    return {k: int(v) for k, v in totals.items()}
+    return {k: round(float(v), _QTY_PRECISION) for k, v in totals.items()}
 
 
 def build_rows(ops_df, prices):
@@ -87,6 +103,7 @@ def build_rows(ops_df, prices):
     for _, ar in articles.iterrows():
         art, name = ar['Артикул'], ar['Назва']
         df_a = ops_df[ops_df['Артикул'] == art]
+        is_w = _is_weighted(df_a['Кількість'])
         mrows = []
 
         for month in months:
@@ -98,7 +115,8 @@ def build_rows(ops_df, prices):
                 continue
             zal = round(float(dm['Кількість'].sum()), 4)
             mrows.append({'type': 'data', 'Артикул': art, 'Назва': name, 'Місяць': month,
-                          **cols, 'Залишок': zal, 'Ціна': '', 'Сума': ''})
+                          **cols, 'Залишок': zal, 'Ціна': '', 'Сума': '',
+                          'is_weighted': is_w})
 
         if not mrows:
             continue
@@ -110,7 +128,8 @@ def build_rows(ops_df, prices):
         ts    = round(tz * price, 2) if price else None
 
         rows.append({'type': 'subtotal', 'Артикул': art, 'Назва': name, 'Місяць': 'РАЗОМ',
-                     **tcols, 'Залишок': tz, 'Ціна': price or '', 'Сума': ts or ''})
+                     **tcols, 'Залишок': tz, 'Ціна': price or '', 'Сума': ts or '',
+                     'is_weighted': is_w})
         rows.append({'type': 'spacer'})
 
         grand['ПрВ']     += tcols['ПрВ'];  grand['Кнк']     += tcols['Кнк']
@@ -136,6 +155,7 @@ def build_summary_rows(ops_df, prices):
     for _, ar in articles.iterrows():
         art, name = ar['Артикул'], ar['Назва']
         df_a  = ops_df[ops_df['Артикул'] == art]
+        is_w  = _is_weighted(df_a['Кількість'])
         cols  = _agg_cols(df_a)
         if all(v == 0 for v in cols.values()):
             continue
@@ -144,7 +164,8 @@ def build_summary_rows(ops_df, prices):
         suma  = round(zal * price, 2) if price else None
 
         rows.append({'type': 'summary', 'Артикул': art, 'Назва': name,
-                     **cols, 'Залишок': zal, 'Ціна': price or '', 'Сума': suma or ''})
+                     **cols, 'Залишок': zal, 'Ціна': price or '', 'Сума': suma or '',
+                     'is_weighted': is_w})
 
         grand['ПрВ']     += cols['ПрВ'];  grand['Кнк']     += cols['Кнк']
         grand['ПрИ']     += cols['ПрИ'];  grand['СпП']     += cols['СпП']
@@ -178,6 +199,7 @@ def build_document_rows(ops_df, prices):
         art, name = ar['Артикул'], ar['Назва']
         df_a = ops_df[ops_df['Артикул'] == art].copy()
         df_a = df_a.sort_values('Дата', na_position='last').reset_index(drop=True)
+        is_w = _is_weighted(df_a['Кількість'])
 
         running_balance = 0.0
         art_pryhid  = 0.0
@@ -196,16 +218,17 @@ def build_document_rows(ops_df, prices):
             date_str = str(d)[:10] if d is not None and str(d) not in ('NaT', 'None', 'nan') else ''
 
             rows.append({
-                'type':      'doc_data',
-                'Артикул':   art,
-                'Назва':     name,
-                'Дата':      date_str,
-                'Операція':  op_name,
-                'Документ':  op.get('Документ', ''),
-                'Прихід':    pryhid_val  if pryhid_val  else '',
-                'Розхід':    rozkhid_val if rozkhid_val else '',
-                'Кількість': qty,
-                'Залишок':   running_balance,
+                'type':        'doc_data',
+                'Артикул':     art,
+                'Назва':       name,
+                'Дата':        date_str,
+                'Операція':    op_name,
+                'Документ':    op.get('Документ', ''),
+                'Прихід':      pryhid_val  if pryhid_val  else '',
+                'Розхід':      rozkhid_val if rozkhid_val else '',
+                'Кількість':   qty,
+                'Залишок':     running_balance,
+                'is_weighted': is_w,
             })
             subdoc = op.get('Піддокумент', '')
             if subdoc:
