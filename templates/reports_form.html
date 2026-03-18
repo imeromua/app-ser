@@ -192,9 +192,18 @@ document.getElementById('reports-form').addEventListener('submit', function(e) {
     });
 });
 
+// Maximum number of 1-second polling attempts before giving up (~2 minutes)
+const MAX_PDF_POLL_ATTEMPTS = 120;
+const PDF_POLL_INTERVAL_MS  = 1000;
+
+/**
+ * Polls /export/pdf/status/:taskId until ready, then triggers download.
+ * @param {string} taskId   - Celery task UUID
+ * @param {number} attempts - current attempt count (incremented each call)
+ */
 function pollPdf(taskId, attempts) {
   attempts = (attempts || 0) + 1;
-  if (attempts > 120) {
+  if (attempts > MAX_PDF_POLL_ATTEMPTS) {
     document.getElementById('pdf-spinner').classList.add('d-none');
     document.getElementById('submit-btn').disabled = false;
     const errDiv = document.getElementById('pdf-error');
@@ -215,7 +224,7 @@ function pollPdf(taskId, attempts) {
         return;
       }
       if (data.status === 'error') throw new Error(data.error || 'PDF generation failed');
-      return new Promise(resolve => setTimeout(resolve, 1000)).then(() => pollPdf(taskId, attempts));
+      return new Promise(resolve => setTimeout(resolve, PDF_POLL_INTERVAL_MS)).then(() => pollPdf(taskId, attempts));
     })
     .catch(err => {
       document.getElementById('pdf-spinner').classList.add('d-none');

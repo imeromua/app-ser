@@ -57,7 +57,7 @@
     {% if r.strategy == 'SKIP' %}
     <div class="alert alert-warning">
       <strong>⏭ Пропущено:</strong> {{ item.filename }} —
-      Файл вже є в базі (period_to={{ r.period_to }}, db_max={{ r.db_max_date }})
+      Файл вже є в базі (період до: {{ r.period_to }}, останній запис: {{ r.db_max_date }})
     </div>
     {% else %}
     <div class="alert alert-success">
