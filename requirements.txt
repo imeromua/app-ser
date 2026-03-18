@@ -5,3 +5,5 @@ xlrd>=2.0.1
 Werkzeug>=2.3.0
 weasyprint>=68.0
 celery[redis]>=5.3
+psycopg2-binary>=2.9.9
+python-dotenv>=1.0.0
