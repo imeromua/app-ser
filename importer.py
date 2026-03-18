@@ -148,7 +148,8 @@ def run_import(buf, filename: str) -> dict:
 
         for art in articles:
             article_id = art['article_id']
-            upsert_article(conn, article_id, art['name'], art.get('price'))
+            upsert_article(conn, article_id, art['name'], art.get('price'),
+                           last_seen_date=period_to)
 
             ops_for_art  = article_ops.get(article_id, [])
             calc_balance = round(sum(op['qty'] for op in ops_for_art), 3)
