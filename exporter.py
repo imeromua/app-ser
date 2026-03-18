@@ -71,6 +71,15 @@ def export_excel(header, rows, grand, report_type='detail'):
             if rt == 'spacer':
                 dr += 1
                 continue
+            if rt == 'doc_subdoc':
+                # Subdocument row: only populate the Document column (col 5) with indentation
+                doc_col_idx = col_keys.index('Документ') + 1 if 'Документ' in col_keys else None
+                if doc_col_idx:
+                    cell = ws.cell(row=dr, column=doc_col_idx)
+                    cell.value = '    ' + row.get('Документ', '')
+                    cell.font = Font(italic=True, color='FF555555', size=9)
+                dr += 1
+                continue
             for ci, ck in enumerate(col_keys, 1):
                 val  = row.get(ck, '')
                 cell = ws.cell(row=dr, column=ci)
