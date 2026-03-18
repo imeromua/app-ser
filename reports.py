@@ -51,7 +51,7 @@ def get_inventory_report(date_from, date_to) -> list[dict]:
                     a.name,
                     a.price,
                     o.op_date        AS inv_date,
-                    o.doc_code       AS inv_doc,
+                    o.doc_type || '/' || o.doc_code AS inv_doc,
                     o.subdoc_code    AS vin_doc,
                     o.qty            AS inv_qty,
                     o.qty * a.price  AS inv_sum
@@ -123,6 +123,34 @@ def get_missing_articles(days: int = 30) -> list[dict]:
                 ORDER BY last_seen_date
                 """,
                 {'days': days},
+            )
+            return [dict(row) for row in cur.fetchall()]
+
+
+def get_balance_discrepancies() -> list[dict]:
+    """
+    Повертає артикули, де SUM(qty) з operations відрізняється від balance_control (J з XLS).
+
+    Використовується після імпорту для перевірки цілісності даних.
+    Допустима похибка: 0.05 (аналогічно validate_snapshots).
+    """
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    a.article_id,
+                    a.name,
+                    a.balance_control               AS expected,
+                    SUM(o.qty)                      AS calculated,
+                    SUM(o.qty) - a.balance_control  AS diff
+                FROM operations o
+                JOIN articles a USING (article_id)
+                WHERE a.balance_control IS NOT NULL
+                GROUP BY a.article_id, a.name, a.balance_control
+                HAVING ABS(SUM(o.qty) - a.balance_control) > 0.05
+                ORDER BY ABS(SUM(o.qty) - a.balance_control) DESC
+                """
             )
             return [dict(row) for row in cur.fetchall()]
 

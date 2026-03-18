@@ -86,7 +86,12 @@ def upload():
                                       op.get('subdoc_type'),
                                       op.get('direction'),
                                   ),
-                    'Документ':   op.get('doc_code', ''),
+                    'Документ':   op.get('doc_type', '') + '/' + op.get('doc_code', ''),
+                    'Піддокумент': (
+                        op.get('subdoc_type', '') + '/' + op.get('subdoc_code', '')
+                        if op.get('subdoc_type') and op.get('subdoc_code')
+                        else ''
+                    ),
                     'Дата':       d,
                     'Рік-Місяць': ym,
                     'Кількість':  qty,

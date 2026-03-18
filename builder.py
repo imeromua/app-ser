@@ -207,6 +207,20 @@ def build_document_rows(ops_df, prices):
                 'Кількість': qty,
                 'Залишок':   running_balance,
             })
+            subdoc = op.get('Піддокумент', '')
+            if subdoc:
+                rows.append({
+                    'type':      'doc_subdoc',
+                    'Артикул':   art,
+                    'Назва':     '',
+                    'Дата':      '',
+                    'Операція':  '',
+                    'Документ':  subdoc,
+                    'Прихід':    '',
+                    'Розхід':    '',
+                    'Кількість': '',
+                    'Залишок':   '',
+                })
             art_pryhid  += pryhid_val
             art_rozkhid += rozkhid_val
 

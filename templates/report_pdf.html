@@ -54,6 +54,8 @@
       color: #1F3864;
     }
     tr.doc-data:nth-child(even) td { background: #f7f9fc; }
+    tr.doc-subdoc td { background: #f8f9fa; font-size: 8px; color: #555; font-style: italic; }
+    .subdoc-name { padding-left: 20px; }
     tr.spacer { height: 4px; }
 
     tfoot tr td {
@@ -108,6 +110,12 @@
   {% for row in rows %}
     {% if row.type == 'spacer' %}
       <tr class="spacer"><td colspan="9"></td></tr>
+    {% elif row.type == 'doc_subdoc' %}
+      <tr class="doc-subdoc">
+        <td></td><td></td><td></td><td></td>
+        <td class="subdoc-name">{{ row.Документ[:60] }}{{ '…' if row.Документ|length > 60 else '' }}</td>
+        <td></td><td></td><td></td><td></td>
+      </tr>
     {% elif row.type == 'doc_data' %}
       <tr class="doc-data">
         <td>{{ row.Артикул }}</td>

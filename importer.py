@@ -18,6 +18,7 @@ from db import (
     upsert_snapshot,
 )
 from parser import parse_xls
+from reports import get_balance_discrepancies
 
 log = logging.getLogger(__name__)
 
@@ -149,7 +150,8 @@ def run_import(buf, filename: str) -> dict:
         for art in articles:
             article_id = art['article_id']
             upsert_article(conn, article_id, art['name'], art.get('price'),
-                           last_seen_date=period_to)
+                           last_seen_date=period_to,
+                           balance_control=art.get('balance_end'))
 
             ops_for_art  = article_ops.get(article_id, [])
             calc_balance = round(sum(op['qty'] for op in ops_for_art), 3)
@@ -191,6 +193,23 @@ def run_import(buf, filename: str) -> dict:
             )
 
         invalid_snapshots = validate_snapshots(conn, upload_id)
+
+    # Перевірка розбіжностей залишків після імпорту
+    try:
+        discrepancies = get_balance_discrepancies()
+        for row in discrepancies:
+            log.warning(
+                'Balance discrepancy — article=%s (%s): expected=%s, calculated=%s, diff=%s',
+                row['article_id'], row['name'],
+                row['expected'], row['calculated'], row['diff'],
+            )
+        if discrepancies:
+            log.warning(
+                'Import %s: %d article(s) with balance discrepancies after import',
+                strategy, len(discrepancies),
+            )
+    except Exception:
+        log.exception('Failed to check balance discrepancies after import')
 
     log.info(
         'Import %s done: articles=%d, ops_inserted=%d, invalid_snapshots=%d',
