@@ -209,8 +209,8 @@ def parse_xls(buf) -> dict:
         if not col_b and marker not in ('+', '-'):
             continue
 
-        # ── Рядок артикула (+) ────────────────────────────────────────────
-        if marker == '+' and is_article_code(col_b):
+        # ── Рядок артикула (будь-який маркер, 8-значний код у col B) ─────────
+        if is_article_code(col_b):
             col_c = str(row.iloc[2]).strip() if len(row) > 2 and pd.notna(row.iloc[2]) else ''
             cur_article = {
                 'article_id':  col_b,
