@@ -46,6 +46,21 @@ app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
 app.secret_key = os.environ.get('SECRET_KEY') or secrets.token_hex(32)
 
 
+def _build_grand_from_rows(rows: list[dict]) -> dict:
+    """Рахує grand total з рядків БД для передачі в export_excel."""
+    grand = {'ПрВ': 0.0, 'Кнк': 0.0, 'ПрИ': 0.0, 'СпП': 0.0, 'Апс': 0.0,
+             'Залишок': 0.0, 'Сума': 0.0,
+             'Прихід': 0.0, 'Розхід': 0.0}
+    for r in rows:
+        for key in grand:
+            val = r.get(key, 0) or 0
+            try:
+                grand[key] += float(val)
+            except (TypeError, ValueError):
+                pass
+    return grand
+
+
 @app.route('/')
 def index():
     return render_template('index.html', error=None)
@@ -466,8 +481,6 @@ def export_pdf_result(task_id):
     if not pdf_path or not os.path.isfile(pdf_path):
         return jsonify({'error': 'Файл не знайдено'}), 404
 
-    # RFC 6266: filename*=UTF-8'' is sufficient; omit filename= to avoid
-    # gunicorn rejecting headers with raw non-ASCII characters.
     from urllib.parse import quote
     encoded_name = quote(pdf_name, safe='')
     content_disposition = f"attachment; filename*=UTF-8''{encoded_name}"
@@ -488,8 +501,6 @@ def export_pdf_result(task_id):
         headers={'Content-Disposition': content_disposition},
     )
     return response
-
-
 
 
 # ── New navigation pages ──────────────────────────────────────────────────────
@@ -621,30 +632,21 @@ def reports_generate():
     }
 
     category_label = category if category != 'all' else 'Всі категорії'
+    safe_cat = category_label.replace('/', '-').replace(' ', '_')
+
+    # Рядки для export_excel — додаємо type='summary'
+    rows_for_export = [dict(r, type='summary') for r in rows]
+
+    # Рахуємо grand з реальних даних
+    grand = _build_grand_from_rows(rows_for_export)
 
     if fmt == 'excel':
-        # Build excel from DB rows
-        rows_for_export = []
-        for r in rows:
-            row_dict = dict(r)
-            row_dict['type'] = 'summary'
-            rows_for_export.append(row_dict)
-        grand = {}
-        safe_cat = category_label.replace('/', '-').replace(' ', '_')
         download_name = f"{safe_cat}_{report_type}.xlsx"
         buf = export_excel(header, rows_for_export, grand, report_type='summary')
         return send_file(buf, as_attachment=True, download_name=download_name,
                          mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
     if fmt == 'pdf':
-        # Store in session and redirect to pdf export
-        rows_for_export = []
-        for r in rows:
-            row_dict = dict(r)
-            row_dict['type'] = 'summary'
-            rows_for_export.append(row_dict)
-        grand = {}
-        safe_cat = category_label.replace('/', '-').replace(' ', '_')
         session_id = save_session_data({
             'header': header,
             'rows': rows_for_export,
@@ -660,8 +662,8 @@ def reports_generate():
     return render_template(
         'result.html',
         header=header,
-        rows=[dict(r, type='summary') for r in rows],
-        grand={},
+        rows=rows_for_export,
+        grand=grand,
         art_count=len(rows),
         row_count=len(rows),
         category=category_label,
