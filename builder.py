@@ -187,6 +187,10 @@ def build_document_rows(ops_df, prices):
       ПрВ, Ппт(Прихід)               → в колонку Прихід
       Кнк, ПрИ, Ппт(Розхід), СпП → в колонку Розхід
       Апк (корегування)          → qty > 0: Прихід; qty < 0: Розхід
+
+    Піддокумент (subdoc_type/subdoc_code) відображається у тій самій комірці
+    «Документ» через символ « → »:
+      ПрВ/X016-0337301 - 13.11.25 → Ппт/DP-30954951 - Зпт/X016-0006879
     """
     if ops_df.empty:
         return [], {'Прихід': 0, 'Розхід': 0, 'Залишок': 0}
@@ -217,33 +221,24 @@ def build_document_rows(ops_df, prices):
             d = op['Дата']
             date_str = str(d)[:10] if d is not None and str(d) not in ('NaT', 'None', 'nan') else ''
 
+            # Формуємо рядок документа: головний + піддокумент в одній комірці
+            doc_main = op.get('Документ', '') or ''
+            subdoc   = op.get('Піддокумент', '') or ''
+            doc_full = f"{doc_main} → {subdoc}" if subdoc else doc_main
+
             rows.append({
                 'type':        'doc_data',
                 'Артикул':     art,
                 'Назва':       name,
                 'Дата':        date_str,
                 'Операція':    op_name,
-                'Документ':    op.get('Документ', ''),
+                'Документ':    doc_full,
                 'Прихід':      pryhid_val  if pryhid_val  else '',
                 'Розхід':      rozkhid_val if rozkhid_val else '',
                 'Кількість':   qty,
                 'Залишок':     running_balance,
                 'is_weighted': is_w,
             })
-            subdoc = op.get('Піддокумент', '')
-            if subdoc:
-                rows.append({
-                    'type':      'doc_subdoc',
-                    'Артикул':   art,
-                    'Назва':     '',
-                    'Дата':      '',
-                    'Операція':  '',
-                    'Документ':  subdoc,
-                    'Прихід':    '',
-                    'Розхід':    '',
-                    'Кількість': '',
-                    'Залишок':   '',
-                })
             art_pryhid  += pryhid_val
             art_rozkhid += rozkhid_val
 
