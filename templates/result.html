@@ -25,9 +25,8 @@
     table{border-collapse:collapse!important}
     td,th{border:1px solid #dee2e6!important}
     tr.data-row:hover td{background:#f8f9fa!important}
-    .doc-name{font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    tr.doc-subdoc td{background:#f8f9fa!important;font-size:11px;color:#555;font-style:italic}
-    .subdoc-name{padding-left:24px;font-size:11px;color:#555;font-style:italic}
+    .doc-name{font-size:11px;max-width:240px;word-break:break-all;white-space:normal}
+    .doc-subdoc{font-size:10px;color:#888;font-style:italic}
     .btn-home{font-size:.95rem;font-weight:600;padding:8px 20px;border-radius:8px}
   </style>
 </head>
@@ -128,26 +127,17 @@
           {% for row in rows %}
             {% if row.type == 'spacer' %}
               <tr class="spacer"><td colspan="9"></td></tr>
-            {% elif row.type == 'doc_subdoc' %}
-              <tr class="doc-subdoc">
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td title="{{ row.Документ }}" class="subdoc-name">{{ row.Документ[:60] }}</td>
-                <td></td><td></td><td></td><td></td>
-              </tr>
             {% elif row.type == 'doc_data' %}
               <tr class="data-row">
                 <td>{{ row.Артикул }}</td>
                 <td title="{{ row.Назва }}">{{ row.Назва[:55] }}{{ '…' if row.Назва|length > 55 else '' }}</td>
                 <td class="ctr">{{ row.Дата }}</td>
                 <td>{{ row.Операція }}</td>
-                <td title="{{ row.Документ }}" class="doc-name">{{ row.Документ[:60] }}</td>
-                                <td class="num">{% if row.Прихід != '' %}<span class="value">{{ qty_val(row.Прихід, row.is_weighted) }}</span><br><span class="unit">{{ qty_unit(row.is_weighted) }}</span>{% endif %}</td>
-                 <td class="num">{% if row.Розхід != '' %}<span class="value">{{ qty_val(row.Розхід, row.is_weighted) }}</span><br><span class="unit">{{ qty_unit(row.is_weighted) }}</span>{% endif %}</td>
-                 <td class="num"><span class="value">{{ qty_val(row.Кількість, row.is_weighted) }}</span><br><span class="unit">{{ qty_unit(row.is_weighted) }}</span></td>
-                 <td class="num fw-bold"><span class="value">{{ qty_val(row.Залишок, row.is_weighted) }}</span><br><span class="unit">{{ qty_unit(row.is_weighted) }}</span></td>
+                <td title="{{ row.Документ }}" class="doc-name">{{ row.Документ }}</td>
+                <td class="num">{% if row.Прихід != '' %}<span class="value">{{ qty_val(row.Прихід, row.is_weighted) }}</span><br><span class="unit">{{ qty_unit(row.is_weighted) }}</span>{% endif %}</td>
+                <td class="num">{% if row.Розхід != '' %}<span class="value">{{ qty_val(row.Розхід, row.is_weighted) }}</span><br><span class="unit">{{ qty_unit(row.is_weighted) }}</span>{% endif %}</td>
+                <td class="num"><span class="value">{{ qty_val(row.Кількість, row.is_weighted) }}</span><br><span class="unit">{{ qty_unit(row.is_weighted) }}</span></td>
+                <td class="num fw-bold"><span class="value">{{ qty_val(row.Залишок, row.is_weighted) }}</span><br><span class="unit">{{ qty_unit(row.is_weighted) }}</span></td>
               </tr>
             {% endif %}
           {% endfor %}
@@ -171,7 +161,7 @@
           {% elif row.type == 'subtotal' %}
             <tr class="subtotal">
               <td>{{ row.Артикул }}</td>
-              <td title="{{ row.Назва }}">▶ {{ row.Назва[:52] }}{{ '…' if row.Назва|length > 52 else '' }}</td>
+              <td title="{{ row.Назва }}">&#9654; {{ row.Назва[:52] }}{{ '…' if row.Назва|length > 52 else '' }}</td>
               <td class="ctr fw-bold">{{ row.Місяць }}</td>
               <td class="num"><span class="value">{{ qty_val(row.ПрВ, row.is_weighted) }}</span><br><span class="unit">{{ qty_unit(row.is_weighted) }}</span></td>
               <td class="num"><span class="value">{{ qty_val(row.Кнк, row.is_weighted) }}</span><br><span class="unit">{{ qty_unit(row.is_weighted) }}</span></td>
