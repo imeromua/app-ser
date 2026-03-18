@@ -125,9 +125,10 @@ def classify_subdoc(subdoc_text: str) -> tuple:
 def get_qty(row, doc_type: str) -> tuple:
     """
     Повертає (qty, col_source) де col_source = 'G' / 'H' / 'I'.
-    ПрВ/СпП/ПрИ → col G (index 6)
-    Кнк          → col H (index 7)
-    Апс          → col I (index 8)
+    ПрВ/СпП/ПрИ → col G (index 6); знак береться з файлу (+ прихід, − розхід)
+    Кнк          → col H (index 7), інвертується (продаж зменшує залишок)
+    Апс          → col I (index 8), повертає «сирий» абсолютний залишок;
+                   дельта обчислюється в parse_xls()
     """
     def safe_float(idx):
         try:
@@ -137,7 +138,7 @@ def get_qty(row, doc_type: str) -> tuple:
             return 0.0
 
     if doc_type == 'Кнк':
-        return safe_float(7), 'H'
+        return -safe_float(7), 'H'   # негативний: продаж зменшує залишок
     if doc_type == 'Апс':
         return safe_float(8), 'I'
     return safe_float(6), 'G'
@@ -199,6 +200,8 @@ def parse_xls(buf) -> dict:
     operations: list = []
     cur_article = None
     pending_op = None
+    # Поточний накопичений залишок для кожного артикула (для обчислення Апс-дельти)
+    running_balances: dict = {}
 
     for i in range(len(df)):
         row    = df.iloc[i]
@@ -237,10 +240,26 @@ def parse_xls(buf) -> dict:
             doc_type, doc_code = _extract_doc_type_code(col_b)
             op_date = _extract_date(col_b)
             qty, col_src = get_qty(row, doc_type)
-            if qty == 0:
-                continue
+            article_id = cur_article['article_id']
+
+            if doc_type == 'Апс':
+                # qty зараз містить «сирий» абсолютний залишок (col I);
+                # конвертуємо в дельту: нова_база − поточний_залишок
+                current_balance = running_balances.get(article_id, 0.0)
+                qty = round(qty - current_balance, 3)
+                # Оновлюємо до нового абсолютного балансу (= raw I value)
+                running_balances[article_id] = current_balance + qty
+                if qty == 0:
+                    continue
+            else:
+                if qty == 0:
+                    continue
+                running_balances[article_id] = round(
+                    running_balances.get(article_id, 0.0) + qty, 3
+                )
+
             op = {
-                'article_id':  cur_article['article_id'],
+                'article_id':  article_id,
                 'doc_type':    doc_type,
                 'doc_code':    doc_code,
                 'subdoc_type': None,
