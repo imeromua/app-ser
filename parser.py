@@ -112,9 +112,8 @@ def get_qty(row, doc_type: str) -> tuple:
     """
     Повертає (qty, col_source) де col_source = 'G' / 'H' / 'I'.
     ПрВ/СпП/ПрИ → col G (index 6); знак береться з файлу
-    Кнк          → col H (index 7), інвертується (продаж = мінус до залишку)
-    Воз          → col H (index 7), береться як є (EPI пише від'ємне число,
-                   тобто повернення = плюс до залишку)
+    Кнк          → col H (index 7), інвертується: EPI пише +1, qty = -1
+    Воз          → col H (index 7), інвертується: EPI пише -1, qty = +1
     Апс          → col I (index 8), позитивна кількість одиниць до списання;
                    завжди зменшує залишок — інвертується
     """
@@ -128,8 +127,8 @@ def get_qty(row, doc_type: str) -> tuple:
     if doc_type == 'Кнк':
         return -safe_float(7), 'H'
     if doc_type == 'Воз':
-        # EPI записує Воз як від'ємне значення в col H → без інверсії = +qty
-        return safe_float(7), 'H'
+        # EPI пише Воз як -1 в col H → інвертуємо: -(-1) = +1 до залишку
+        return -safe_float(7), 'H'
     if doc_type == 'Апс':
         return -safe_float(8), 'I'
     return safe_float(6), 'G'
