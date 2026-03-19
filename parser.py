@@ -69,8 +69,6 @@ def _extract_doc_type_code(text: str) -> tuple:
     """
     Витягує (doc_type, doc_code) з рядка основного документа.
     Приклад: 'ПрВ/X016-0337298 - 13.11.25' → ('ПрВ', 'X016-0337298')
-    Формат: TYPE/CODE - DATE  (пробіл перед дефісом відокремлює код від дати)
-    Повертає tuple[str, str].
     """
     m = re.match(r'^(.{3})/(\S+)', text.strip())
     if m:
@@ -113,9 +111,9 @@ def classify_subdoc(subdoc_text: str) -> tuple:
 def get_qty(row, doc_type: str) -> tuple:
     """
     Повертає (qty, col_source) де col_source = 'G' / 'H' / 'I'.
-    ПрВ/СпП/ПрИ → col G (index 6); знак береться з файлу (+ прихід, − розхід)
-    Кнк          → col H (index 7), інвертується (продаж зменшує залишок)
-    Апс          → col I (index 8), повертає «сирий» абсолютний залишок;
+    ПрВ/СпП/ПрИ → col G (index 6); знак береться з файлу
+    Кнк          → col H (index 7), інвертується
+    Апс          → col I (index 8), абсолютний залишок після коригування;
                    дельта обчислюється в parse_xls()
     """
     def safe_float(idx):
@@ -142,6 +140,19 @@ def _is_op_marker(marker) -> bool:
         return False
     s = str(marker).strip()
     return s == '-' or s.startswith('-')
+
+
+def _get_balance_start(row) -> float:
+    """
+    Читає початковий залишок (залишок на початок періоду) з рядка артикула.
+    EPI: col E (index 4) — "Залишок на початок".
+    Повертає float (0.0 якщо порожньо або відсутнє).
+    """
+    try:
+        v = row.iloc[4]
+        return float(v) if pd.notna(v) else 0.0
+    except Exception:
+        return 0.0
 
 
 def parse_xls(buf) -> dict:
@@ -197,6 +208,9 @@ def parse_xls(buf) -> dict:
     operations: list = []
     cur_article = None
     pending_op = None
+    # running_balances: article_id → поточний накопичений залишок
+    # Ініціалізується з balance_start артикула (col E), щоби
+    # Апс-дельта рахувалась правильно з урахуванням початкового залишку.
     running_balances: dict = {}
 
     for i in range(len(df)):
@@ -210,19 +224,23 @@ def parse_xls(buf) -> dict:
         # ── Рядок артикула ──────────────────────────────────────────────────────────
         if is_article_code(col_b):
             col_c = str(row.iloc[2]).strip() if len(row) > 2 and pd.notna(row.iloc[2]) else ''
+            balance_start = _get_balance_start(row)
             cur_article = {
-                'article_id':  col_b,
-                'name':        col_c,
-                'price':       safe_float_at(row, 11),
-                'total_in':    safe_float_at(row, 6),
-                'total_out':   safe_float_at(row, 7),
-                'balance_end': safe_float_at(row, 9),
+                'article_id':    col_b,
+                'name':          col_c,
+                'price':         safe_float_at(row, 11),
+                'total_in':      safe_float_at(row, 6),
+                'total_out':     safe_float_at(row, 7),
+                'balance_start': balance_start,
+                'balance_end':   safe_float_at(row, 9),
             }
             articles.append(cur_article)
+            # Ініціалізуємо running_balance з balance_start, а не з 0
+            running_balances[col_b] = balance_start
             pending_op = None
             continue
 
-        # ── Рядки операцій ('-' або '- ч' тощо) ────────────────────────────────
+        # ── Рядки операцій ('-' або '- ч' тощо) ─────────────────────────────
         if not _is_op_marker(marker) or cur_article is None:
             continue
 
@@ -237,9 +255,13 @@ def parse_xls(buf) -> dict:
             article_id = cur_article['article_id']
 
             if doc_type == 'Апс':
+                # qty — абсолютний залишок після коригування (col I)
+                # дельта = новий_абсолютний − поточний_залишок
+                # running_balance вже ініціалізовано з balance_start
                 current_balance = running_balances.get(article_id, 0.0)
-                qty = round(qty - current_balance, 3)
-                running_balances[article_id] = current_balance + qty
+                aps_absolute = qty          # зберігаємо для ясності
+                qty = round(aps_absolute - current_balance, 3)
+                running_balances[article_id] = aps_absolute  # записуємо абсолютне значення
                 if qty == 0:
                     continue
             else:
