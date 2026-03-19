@@ -28,7 +28,6 @@ from session_store import save_session_data, load_session_data, cleanup_old_sess
 from parser import parse_xls, op_display_name
 from builder import build_rows, build_summary_rows, build_document_rows
 from exporter import export_excel
-from reports import get_inventory_template
 from tasks import celery, generate_pdf_task  # noqa: F401 — celery app must be imported
 
 logging.basicConfig(level=logging.WARNING)
@@ -62,14 +61,12 @@ def upload():
             if first_header is None:
                 first_header = hdr
 
-            # Збираємо ціни з артикулів
             all_prices.update({
                 a['article_id']: a['price']
                 for a in result['articles']
                 if a.get('price')
             })
 
-            # Перетворюємо операції на DataFrame для builder.py
             articles_map = {a['article_id']: a for a in result['articles']}
             records = []
             for op in result['operations']:
@@ -133,7 +130,6 @@ def upload():
         else:
             download_name = f"{safe_category}_детальний_звіт.xlsx"
 
-        # Store data in a server-side temp file; only keep UUID in cookie
         session_id = save_session_data({
             'header': header,
             'rows': rows,
@@ -173,6 +169,10 @@ def download():
 
 @app.route('/download_inventory')
 def download_inventory():
+    """
+    Відомість інвентаризації з артикулів ПОТОЧНОГО звіту (з сесії).
+    Не запитує БД — використовує тільки дані сесії поточного звіту.
+    """
     sid = session.get('sid')
     data = load_session_data(sid)
     if not data:
@@ -184,31 +184,22 @@ def download_inventory():
     hdr = data.get('header', {})
     safe_category = category.replace('/', '-').replace(' ', '_')
 
-    # Try to load inventory rows from DB; fall back to session_store on empty DB
-    try:
-        inv_rows = get_inventory_template()
-    except Exception:
-        logging.exception('get_inventory_template() failed, falling back to session_store')
-        inv_rows = []
-
-    if not inv_rows:
-        # Fallback: derive inv_rows from session data
-        if report_type == 'document':
-            article_map: dict = {}
-            for r in rows:
-                if r.get('type') == 'doc_data':
-                    article_map[r['Артикул']] = r
-            inv_rows = list(article_map.values())
-        else:
-            inv_rows = [r for r in rows if r.get('type') in ('subtotal', 'summary')]
+    # Беремо артикули виключно з поточного звіту (сесія)
+    if report_type == 'document':
+        article_map: dict = {}
+        for r in rows:
+            if r.get('type') == 'doc_data':
+                article_map[r['Артикул']] = r
+        inv_rows = list(article_map.values())
+    else:
+        inv_rows = [r for r in rows if r.get('type') in ('subtotal', 'summary')]
 
     if not inv_rows:
         return 'Немає даних для відомості інвентаризації', 400
 
-    # Sort alphabetically by name, case-insensitive
     inv_rows.sort(key=lambda r: r.get('Назва', '').lower())
 
-    # ── Build xlsx ────────────────────────────────────────────────────────────
+    # ── Build xlsx ──────────────────────────────────────────────────────────────────
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = 'Інвентаризація'
@@ -218,7 +209,6 @@ def download_inventory():
     for ci, w in enumerate(col_widths, 1):
         ws.column_dimensions[get_column_letter(ci)].width = w
 
-    # Styles
     title_font   = XlFont(bold=True, color='FF0000', size=14)
     label_font   = XlFont(bold=True)
     value_font   = XlFont(color='1F3864')
@@ -231,14 +221,12 @@ def download_inventory():
     center_align = XlAlign(horizontal='center', vertical='center')
     right_align  = XlAlign(horizontal='right', vertical='center')
 
-    # ── Row 1: Title ──────────────────────────────────────────────────────────
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=NUM_COLS)
     tc = ws.cell(row=1, column=1, value='Відомість інвентаризації')
     tc.font = title_font
     tc.alignment = XlAlign(horizontal='left', vertical='center')
     ws.row_dimensions[1].height = 22
 
-    # ── Row 2: Маркет ─────────────────────────────────────────────────────────
     ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=2)
     c = ws.cell(row=2, column=1, value='Маркет:')
     c.font = label_font
@@ -248,7 +236,6 @@ def download_inventory():
     c.alignment = XlAlign(vertical='center', wrap_text=True)
     ws.merge_cells(start_row=2, start_column=3, end_row=2, end_column=NUM_COLS)
 
-    # ── Row 3: Єрархія ────────────────────────────────────────────────────────
     ws.merge_cells(start_row=3, start_column=1, end_row=3, end_column=2)
     c = ws.cell(row=3, column=1, value='Єрархія:')
     c.font = label_font
@@ -258,7 +245,6 @@ def download_inventory():
     c.alignment = XlAlign(vertical='center', wrap_text=True)
     ws.merge_cells(start_row=3, start_column=3, end_row=3, end_column=NUM_COLS)
 
-    # ── Row 4: Примітки ───────────────────────────────────────────────────────
     ws.merge_cells(start_row=4, start_column=1, end_row=4, end_column=2)
     c = ws.cell(row=4, column=1, value='Примітки:')
     c.font = label_font
@@ -268,10 +254,8 @@ def download_inventory():
     c.alignment = XlAlign(vertical='center', wrap_text=True)
     ws.merge_cells(start_row=4, start_column=3, end_row=4, end_column=NUM_COLS)
 
-    # ── Row 5: Spacer ─────────────────────────────────────────────────────────
     ws.row_dimensions[5].height = 8
 
-    # ── Row 6: Table header ───────────────────────────────────────────────────
     HEADER_ROW = 6
     col_headers = [
         '№', 'Артикул', 'Назва',
@@ -286,7 +270,6 @@ def download_inventory():
         cell.border = cell_border
     ws.row_dimensions[HEADER_ROW].height = 42
 
-    # ── Data rows ─────────────────────────────────────────────────────────────
     DATA_START = HEADER_ROW + 1
     for i, r in enumerate(inv_rows, 1):
         dr = DATA_START + i - 1
@@ -304,10 +287,8 @@ def download_inventory():
         c.border = cell_border
         c.alignment = XlAlign(vertical='center', wrap_text=True)
 
-        # Од. вим. — left empty
         ws.cell(row=dr, column=4).border = cell_border
 
-        # База (залишок)
         zal = r.get('Залишок', '')
         c = ws.cell(row=dr, column=5)
         c.border = cell_border
@@ -324,34 +305,25 @@ def download_inventory():
             except (ValueError, TypeError):
                 c.value = zal
 
-        # Фактичні залишки — empty for manual entry
         ws.cell(row=dr, column=6).border = cell_border
-        # Примітки — empty for manual entry
         ws.cell(row=dr, column=7).border = cell_border
-        # Час інвентаризації — empty for manual entry
         ws.cell(row=dr, column=8).border = cell_border
 
-    # ── Footer ────────────────────────────────────────────────────────────────
     last_data_row = DATA_START + len(inv_rows) - 1
-    fr = last_data_row + 2  # footer start row
+    fr = last_data_row + 2
 
     ws.merge_cells(start_row=fr, start_column=1, end_row=fr, end_column=NUM_COLS)
     ws.cell(row=fr, column=1, value='Особи, які проводили перерахунок:')
     ws.row_dimensions[fr].height = 22
 
-    # Two signature blocks (ПІП / підпис)
     for sig_idx in range(2):
         line_row  = fr + 2 + sig_idx * 4
         label_row = line_row + 1
-
-        # Underline for name (ПІП)
         for col_idx in range(3, 6):
             ws.cell(row=line_row, column=col_idx).border = bot_border
         ws.merge_cells(start_row=label_row, start_column=3, end_row=label_row, end_column=5)
         pip = ws.cell(row=label_row, column=3, value='(ПІП)')
         pip.alignment = center_align
-
-        # Underline for signature (підпис)
         for col_idx in range(7, 9):
             ws.cell(row=line_row, column=col_idx).border = bot_border
         ws.merge_cells(start_row=label_row, start_column=7, end_row=label_row, end_column=8)
@@ -370,7 +342,6 @@ def download_inventory():
             value='Дата проведення  ________________________  час з  ________________  по  ________________')
     ws.row_dimensions[date_row].height = 22
 
-    # ── Output ────────────────────────────────────────────────────────────────
     out = io.BytesIO()
     wb.save(out)
     out.seek(0)
@@ -383,8 +354,6 @@ def download_inventory():
 
 @app.route('/download_pdf')
 def download_pdf():
-    # DEPRECATED: маршрут видалено. Використовуйте асинхронний API:
-    # POST /export/pdf/start → GET /export/pdf/status/<task_id> → GET /export/pdf/result/<task_id>
     return (
         'Цей маршрут більше не підтримується. '
         'Використовуйте /export/pdf/start → /export/pdf/status → /export/pdf/result.',
@@ -431,7 +400,6 @@ def export_pdf_status(task_id):
         return jsonify({'status': 'pending'})
     if state == 'SUCCESS':
         return jsonify({'status': 'ready'})
-    # FAILURE або інший термінальний стан
     error_msg = str(result.result) if result.result else state
     return jsonify({'status': 'error', 'error': error_msg})
 
@@ -458,8 +426,6 @@ def export_pdf_result(task_id):
     if not pdf_path or not os.path.isfile(pdf_path):
         return jsonify({'error': 'Файл не знайдено'}), 404
 
-    # RFC 6266: filename*=UTF-8'' is sufficient; omit filename= to avoid
-    # gunicorn rejecting headers with raw non-ASCII characters.
     from urllib.parse import quote
     encoded_name = quote(pdf_name, safe='')
     content_disposition = f"attachment; filename*=UTF-8''{encoded_name}"
