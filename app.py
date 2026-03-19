@@ -745,28 +745,38 @@ def export_db():
         return jsonify({'error': 'Потрібно вказати date_from та date_to'}), 400
 
     try:
-        rows = get_summary_report(date_from, date_to)
-        wb = openpyxl.Workbook()
-        ws = wb.active
-        ws.title = 'Звіт'
-        headers = ['Артикул', 'Назва', 'Ціна', 'Прихід', 'Продажі',
-                   'Списання', 'Переміщення', 'Інвентаризація', 'Залишок', 'Сума залишку']
-        for ci, h in enumerate(headers, 1):
-            ws.cell(row=1, column=ci, value=h).font = XlFont(bold=True)
-        for ri, r in enumerate(rows, 2):
-            ws.cell(row=ri, column=1, value=r['article_id'])
-            ws.cell(row=ri, column=2, value=r['name'])
-            ws.cell(row=ri, column=3, value=float(r['price']) if r.get('price') else '')
-            ws.cell(row=ri, column=4, value=float(r['total_in']) if r.get('total_in') else 0)
-            ws.cell(row=ri, column=5, value=float(r['total_sales']) if r.get('total_sales') else 0)
-            ws.cell(row=ri, column=6, value=float(r['total_writeoff']) if r.get('total_writeoff') else 0)
-            ws.cell(row=ri, column=7, value=float(r['total_transfer']) if r.get('total_transfer') else 0)
-            ws.cell(row=ri, column=8, value=float(r['total_inv']) if r.get('total_inv') else 0)
-            ws.cell(row=ri, column=9, value=float(r['balance']) if r.get('balance') else 0)
-            ws.cell(row=ri, column=10, value=float(r['balance_sum']) if r.get('balance_sum') else 0)
-        buf = io.BytesIO()
-        wb.save(buf)
-        buf.seek(0)
+        db_rows = get_summary_report(date_from, date_to)
+        rows = []
+        for r in db_rows:
+            rows.append({
+                'type':     'summary',
+                'Артикул':  r['article_id'],
+                'Назва':    r['name'],
+                'ПрВ':      float(r['total_in']       or 0),
+                'Кнк':      float(r['total_sales']    or 0),
+                'ПрИ':      float(r['total_transfer'] or 0),
+                'СпП':      float(r['total_writeoff'] or 0),
+                'Апс':      float(r['total_inv']      or 0),
+                'Залишок':  float(r['balance']        or 0),
+                'Ціна':     float(r['price']          or 0),
+                'Сума':     float(r['balance_sum']    or 0),
+            })
+        grand = {
+            'ПрВ':     sum(r['ПрВ']     for r in rows),
+            'Кнк':     sum(r['Кнк']     for r in rows),
+            'ПрИ':     sum(r['ПрИ']     for r in rows),
+            'СпП':     sum(r['СпП']     for r in rows),
+            'Апс':     sum(r['Апс']     for r in rows),
+            'Залишок': sum(r['Залишок'] for r in rows),
+            'Сума':    sum(r['Сума']    for r in rows),
+        }
+        header = {
+            'title':     'Рух товарів — зведений звіт',
+            'shop':      '',
+            'warehouse': '',
+            'period':    f'{date_from} — {date_to}',
+        }
+        buf = export_excel(header, rows, grand, report_type='summary')
         filename = f'звіт_{date_from}_{date_to}.xlsx'
         return send_file(buf, as_attachment=True, download_name=filename,
                          mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
