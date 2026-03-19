@@ -23,12 +23,14 @@ from flask import Flask, request, render_template, send_file, session, jsonify, 
 from werkzeug.utils import secure_filename
 import pandas as pd
 
-from categories import detect_category
+from categories import detect_category, CATEGORIES
 from session_store import save_session_data, load_session_data, cleanup_old_sessions
 from parser import parse_xls, op_display_name
 from builder import build_rows, build_summary_rows, build_document_rows
 from exporter import export_excel
 from tasks import celery, generate_pdf_task  # noqa: F401 — celery app must be imported
+from importer import run_import
+from db import get_conn
 
 logging.basicConfig(level=logging.WARNING)
 
@@ -446,6 +448,465 @@ def export_pdf_result(task_id):
         headers={'Content-Disposition': content_disposition},
     )
     return response
+
+
+# ── Dashboard ────────────────────────────────────────────────────────────────
+
+@app.route('/dashboard')
+def dashboard():
+    return render_template('dashboard.html')
+
+
+# ── Import to DB ─────────────────────────────────────────────────────────────
+
+@app.route('/import', methods=['POST'])
+def import_to_db():
+    """Імпортує XLS-файл до PostgreSQL. Повертає JSON зі статистикою."""
+    f = request.files.get('file')
+    if not f or not f.filename:
+        return jsonify({'error': 'Файл не знайдено'}), 400
+    try:
+        buf = io.BytesIO(f.read())
+        filename = secure_filename(f.filename)
+        result = run_import(buf, filename)
+
+        # Серіалізуємо invalid_snapshots (може містити Decimal/date)
+        invalid = []
+        for row in result.get('invalid_snapshots', []):
+            invalid.append({k: str(v) for k, v in row.items()})
+
+        header_info = {}
+        try:
+            buf.seek(0)
+            parsed = parse_xls(buf)
+            hdr = parsed.get('header', {})
+            header_info = {
+                'period_from': str(hdr['period_from']) if hdr.get('period_from') else None,
+                'period_to':   str(hdr['period_to'])   if hdr.get('period_to')   else None,
+            }
+        except Exception:
+            pass
+
+        return jsonify({
+            'strategy':          result.get('strategy'),
+            'ops_inserted':      result.get('ops_inserted', 0),
+            'articles_count':    result.get('articles_count', 0),
+            'invalid_snapshots': invalid,
+            'invalid_count':     len(invalid),
+            **header_info,
+        })
+    except Exception as e:
+        logging.exception('Error during DB import')
+        return jsonify({'error': f'Помилка імпорту: {e}'}), 500
+
+
+@app.route('/imports')
+def list_imports():
+    """Повертає список останніх 20 імпортів з таблиці uploads (JSON)."""
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT upload_id, filename, shop, warehouse,
+                           period_from, period_to, uploaded_at,
+                           strategy, ops_inserted
+                    FROM uploads
+                    ORDER BY uploaded_at DESC
+                    LIMIT 20
+                    """
+                )
+                rows = cur.fetchall()
+        result = []
+        for r in rows:
+            result.append({
+                'upload_id':    str(r['upload_id']),
+                'filename':     r['filename'],
+                'shop':         r['shop'],
+                'warehouse':    r['warehouse'],
+                'period_from':  str(r['period_from'])  if r['period_from']  else None,
+                'period_to':    str(r['period_to'])    if r['period_to']    else None,
+                'uploaded_at':  str(r['uploaded_at'])  if r['uploaded_at']  else None,
+                'strategy':     r['strategy'],
+                'ops_inserted': r['ops_inserted'],
+            })
+        return jsonify(result)
+    except Exception as e:
+        logging.exception('Error fetching imports list')
+        return jsonify({'error': str(e)}), 500
+
+
+# ── API ───────────────────────────────────────────────────────────────────────
+
+@app.route('/api/db_status')
+def api_db_status():
+    """Статистика БД: кількість артикулів, операцій, суми по типах операцій."""
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute('SELECT COUNT(*) AS cnt FROM articles')
+                articles_count = cur.fetchone()['cnt']
+
+                cur.execute('SELECT COUNT(*) AS cnt FROM operations')
+                ops_count = cur.fetchone()['cnt']
+
+                cur.execute('SELECT MIN(op_date) AS mn, MAX(op_date) AS mx FROM operations')
+                dates = cur.fetchone()
+                date_min = str(dates['mn']) if dates['mn'] else None
+                date_max = str(dates['mx']) if dates['mx'] else None
+
+                days_in_db = 0
+                if dates['mn'] and dates['mx']:
+                    days_in_db = (dates['mx'] - dates['mn']).days
+
+                cur.execute(
+                    """
+                    SELECT doc_type, SUM(ABS(qty)) AS total_qty
+                    FROM operations
+                    GROUP BY doc_type
+                    ORDER BY doc_type
+                    """
+                )
+                by_type = {r['doc_type']: float(r['total_qty']) for r in cur.fetchall()}
+
+                cur.execute(
+                    """
+                    SELECT SUM(o.qty * a.price) AS total_sum
+                    FROM operations o
+                    JOIN articles a USING (article_id)
+                    WHERE a.price IS NOT NULL
+                    """
+                )
+                row = cur.fetchone()
+                total_sum = float(row['total_sum']) if row and row['total_sum'] else 0.0
+
+                cur.execute(
+                    """
+                    SELECT uploaded_at FROM uploads
+                    ORDER BY uploaded_at DESC LIMIT 1
+                    """
+                )
+                last_import_row = cur.fetchone()
+                last_import = str(last_import_row['uploaded_at']) if last_import_row else None
+
+                cur.execute(
+                    """
+                    SELECT a.article_id, a.name, SUM(o.qty) AS balance,
+                           a.price, SUM(o.qty) * a.price AS balance_sum
+                    FROM operations o
+                    JOIN articles a USING (article_id)
+                    WHERE a.price IS NOT NULL
+                    GROUP BY a.article_id, a.name, a.price
+                    HAVING SUM(o.qty) > 0
+                    ORDER BY SUM(o.qty) * a.price DESC NULLS LAST
+                    LIMIT 10
+                    """
+                )
+                top_articles = []
+                for r in cur.fetchall():
+                    top_articles.append({
+                        'article_id':   r['article_id'],
+                        'name':         r['name'],
+                        'balance':      float(r['balance']) if r['balance'] else 0.0,
+                        'price':        float(r['price'])   if r['price']   else 0.0,
+                        'balance_sum':  float(r['balance_sum']) if r['balance_sum'] else 0.0,
+                    })
+
+        return jsonify({
+            'articles_count': articles_count,
+            'ops_count':      ops_count,
+            'days_in_db':     days_in_db,
+            'total_sum':      total_sum,
+            'date_min':       date_min,
+            'date_max':       date_max,
+            'last_import':    last_import,
+            'by_type':        by_type,
+            'top_articles':   top_articles,
+        })
+    except Exception as e:
+        logging.exception('Error fetching DB status')
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/categories')
+def api_categories():
+    """Повертає список категорій з кількістю артикулів з БД."""
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute('SELECT article_id, name FROM articles ORDER BY name')
+                articles = cur.fetchall()
+
+        category_map: dict = {cat: [] for cat in CATEGORIES}
+        category_map['Змішана продукція'] = []
+
+        for art in articles:
+            cat = detect_category([art['name']])
+            if cat not in category_map:
+                category_map[cat] = []
+            category_map[cat].append(art['article_id'])
+
+        result = []
+        for cat, ids in sorted(category_map.items()):
+            if ids:
+                result.append({'category': cat, 'count': len(ids)})
+
+        return jsonify(result)
+    except Exception as e:
+        logging.exception('Error fetching categories')
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/uploads')
+def api_uploads():
+    """Повертає останні 20 імпортів (JSON для дашборду)."""
+    return list_imports()
+
+
+# ── Reports from DB ───────────────────────────────────────────────────────────
+
+@app.route('/reports_db', methods=['GET'])
+def reports_db():
+    return render_template('dashboard.html', active_tab='reports')
+
+
+@app.route('/export_db', methods=['POST'])
+def export_db():
+    """Звіт з БД → XLSX файл."""
+    from reports import get_summary_report
+    if request.is_json:
+        body = request.get_json(silent=True) or {}
+        date_from = body.get('date_from') or request.form.get('date_from')
+        date_to   = body.get('date_to')   or request.form.get('date_to')
+    else:
+        date_from = request.form.get('date_from')
+        date_to   = request.form.get('date_to')
+
+    if not date_from or not date_to:
+        return jsonify({'error': 'Потрібно вказати date_from та date_to'}), 400
+
+    try:
+        rows = get_summary_report(date_from, date_to)
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = 'Звіт'
+        headers = ['Артикул', 'Назва', 'Ціна', 'Прихід', 'Продажі',
+                   'Списання', 'Переміщення', 'Інвентаризація', 'Залишок', 'Сума залишку']
+        for ci, h in enumerate(headers, 1):
+            ws.cell(row=1, column=ci, value=h).font = XlFont(bold=True)
+        for ri, r in enumerate(rows, 2):
+            ws.cell(row=ri, column=1, value=r['article_id'])
+            ws.cell(row=ri, column=2, value=r['name'])
+            ws.cell(row=ri, column=3, value=float(r['price']) if r.get('price') else '')
+            ws.cell(row=ri, column=4, value=float(r['total_in']) if r.get('total_in') else 0)
+            ws.cell(row=ri, column=5, value=float(r['total_sales']) if r.get('total_sales') else 0)
+            ws.cell(row=ri, column=6, value=float(r['total_writeoff']) if r.get('total_writeoff') else 0)
+            ws.cell(row=ri, column=7, value=float(r['total_transfer']) if r.get('total_transfer') else 0)
+            ws.cell(row=ri, column=8, value=float(r['total_inv']) if r.get('total_inv') else 0)
+            ws.cell(row=ri, column=9, value=float(r['balance']) if r.get('balance') else 0)
+            ws.cell(row=ri, column=10, value=float(r['balance_sum']) if r.get('balance_sum') else 0)
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        filename = f'звіт_{date_from}_{date_to}.xlsx'
+        return send_file(buf, as_attachment=True, download_name=filename,
+                         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    except Exception as e:
+        logging.exception('Error exporting DB report')
+        return jsonify({'error': str(e)}), 500
+
+
+# ── Inventory from DB ─────────────────────────────────────────────────────────
+
+@app.route('/download_inventory_db')
+def download_inventory_db():
+    """Відомість інвентаризації з БД по категорії."""
+    from reports import get_inventory_template
+    category = request.args.get('category', '')
+
+    try:
+        all_rows = get_inventory_template()
+    except Exception as e:
+        logging.exception('Error fetching inventory from DB')
+        return f'Помилка отримання даних з БД: {e}', 500
+
+    if not all_rows:
+        return 'База даних порожня', 400
+
+    if category:
+        inv_rows = [
+            r for r in all_rows
+            if detect_category([r['Назва']]) == category
+        ]
+    else:
+        inv_rows = all_rows
+
+    if not inv_rows:
+        return f'Немає даних для категорії «{category}»', 400
+
+    inv_rows.sort(key=lambda r: r.get('Назва', '').lower())
+    safe_category = (category or 'всі').replace('/', '-').replace(' ', '_')
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = 'Інвентаризація'
+    NUM_COLS = 8
+    col_widths = [5, 12, 56, 10, 14, 16, 30, 14]
+    for ci, w in enumerate(col_widths, 1):
+        ws.column_dimensions[get_column_letter(ci)].width = w
+
+    title_font   = XlFont(bold=True, color='FF0000', size=14)
+    label_font   = XlFont(bold=True)
+    value_font   = XlFont(color='1F3864')
+    hdr_fill     = PatternFill(start_color='9DC3E6', end_color='9DC3E6', fill_type='solid')
+    hdr_font     = XlFont(bold=True)
+    hdr_align    = XlAlign(horizontal='center', vertical='center', wrap_text=True)
+    thin         = Side(style='thin')
+    cell_border  = Border(left=thin, right=thin, top=thin, bottom=thin)
+    bot_border   = Border(bottom=thin)
+    center_align = XlAlign(horizontal='center', vertical='center')
+    right_align  = XlAlign(horizontal='right', vertical='center')
+
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=NUM_COLS)
+    tc = ws.cell(row=1, column=1, value='Відомість інвентаризації')
+    tc.font = title_font
+    tc.alignment = XlAlign(horizontal='left', vertical='center')
+    ws.row_dimensions[1].height = 22
+
+    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=2)
+    c = ws.cell(row=2, column=1, value='Категорія:')
+    c.font = label_font
+    ws.merge_cells(start_row=2, start_column=3, end_row=2, end_column=NUM_COLS)
+    c = ws.cell(row=2, column=3, value=category or 'Всі категорії')
+    c.font = value_font
+
+    ws.row_dimensions[3].height = 8
+
+    HEADER_ROW = 4
+    col_headers = ['№', 'Артикул', 'Назва', 'Од.\nвим.', 'База\n(залишок)',
+                   'Фактичні\nзалишки', 'Примітки', 'Час\nінвентаризації']
+    for ci, h in enumerate(col_headers, 1):
+        cell = ws.cell(row=HEADER_ROW, column=ci, value=h)
+        cell.font = hdr_font
+        cell.fill = hdr_fill
+        cell.alignment = hdr_align
+        cell.border = cell_border
+    ws.row_dimensions[HEADER_ROW].height = 42
+
+    DATA_START = HEADER_ROW + 1
+    for i, r in enumerate(inv_rows, 1):
+        dr = DATA_START + i - 1
+        c = ws.cell(row=dr, column=1, value=i)
+        c.border = cell_border
+        c.alignment = center_align
+        c = ws.cell(row=dr, column=2, value=r.get('Артикул', ''))
+        c.border = cell_border
+        c.alignment = center_align
+        c.font = XlFont(bold=True)
+        c = ws.cell(row=dr, column=3, value=r.get('Назва', ''))
+        c.border = cell_border
+        c.alignment = XlAlign(vertical='center', wrap_text=True)
+        ws.cell(row=dr, column=4).border = cell_border
+        zal = r.get('Залишок', '')
+        c = ws.cell(row=dr, column=5)
+        c.border = cell_border
+        c.alignment = right_align
+        c.font = XlFont(bold=True)
+        if zal not in ('', None):
+            try:
+                fval = float(zal)
+                c.value = int(fval) if fval.is_integer() else round(fval, 2)
+            except (ValueError, TypeError):
+                c.value = zal
+        ws.cell(row=dr, column=6).border = cell_border
+        ws.cell(row=dr, column=7).border = cell_border
+        ws.cell(row=dr, column=8).border = cell_border
+
+    last_data_row = DATA_START + len(inv_rows) - 1
+    fr = last_data_row + 2
+    ws.merge_cells(start_row=fr, start_column=1, end_row=fr, end_column=NUM_COLS)
+    ws.cell(row=fr, column=1, value='Особи, які проводили перерахунок:')
+    ws.row_dimensions[fr].height = 22
+
+    for sig_idx in range(2):
+        line_row  = fr + 2 + sig_idx * 4
+        label_row = line_row + 1
+        for col_idx in range(3, 6):
+            ws.cell(row=line_row, column=col_idx).border = bot_border
+        ws.merge_cells(start_row=label_row, start_column=3, end_row=label_row, end_column=5)
+        pip = ws.cell(row=label_row, column=3, value='(ПІП)')
+        pip.alignment = center_align
+        for col_idx in range(7, 9):
+            ws.cell(row=line_row, column=col_idx).border = bot_border
+        ws.merge_cells(start_row=label_row, start_column=7, end_row=label_row, end_column=8)
+        sign = ws.cell(row=label_row, column=7, value='(підпис)')
+        sign.alignment = center_align
+
+    out = io.BytesIO()
+    wb.save(out)
+    out.seek(0)
+    filename = f'{safe_category}_інвентаризація_БД.xlsx'
+    return send_file(out, as_attachment=True, download_name=filename,
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
+
+@app.route('/db/clear', methods=['POST'])
+def db_clear():
+    """Очищає всі таблиці БД. Вимагає підтверджувальний токен."""
+    token = request.json.get('confirm_token') if request.is_json else request.form.get('confirm_token')
+    if token != 'CONFIRM_CLEAR':
+        return jsonify({'error': 'Невірний токен підтвердження. Передайте confirm_token=CONFIRM_CLEAR'}), 400
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute('TRUNCATE TABLE article_snapshots, operations, uploads, articles CASCADE')
+        logging.warning('Database cleared: all tables truncated via /db/clear endpoint')
+        return jsonify({'success': True, 'message': 'Всі дані видалено'})
+    except Exception as e:
+        logging.exception('Error clearing DB')
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/backup')
+def backup():
+    """Скачує CSV-дамп таблиці operations."""
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT o.id, o.article_id, a.name, o.doc_type, o.doc_code,
+                           o.subdoc_type, o.subdoc_code, o.direction,
+                           o.op_date, o.qty, o.col_source, o.import_id
+                    FROM operations o
+                    JOIN articles a USING (article_id)
+                    ORDER BY o.op_date, o.article_id
+                    """
+                )
+                rows = cur.fetchall()
+
+        import csv
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(['id', 'article_id', 'name', 'doc_type', 'doc_code',
+                         'subdoc_type', 'subdoc_code', 'direction',
+                         'op_date', 'qty', 'col_source', 'import_id'])
+        for r in rows:
+            writer.writerow([
+                r['id'], r['article_id'], r['name'], r['doc_type'], r['doc_code'],
+                r['subdoc_type'], r['subdoc_code'], r['direction'],
+                r['op_date'], r['qty'], r['col_source'], r['import_id'],
+            ])
+        buf.seek(0)
+        bytes_buf = io.BytesIO(buf.getvalue().encode('utf-8-sig'))
+        return send_file(bytes_buf, as_attachment=True,
+                         download_name='operations_backup.csv',
+                         mimetype='text/csv; charset=utf-8')
+    except Exception as e:
+        logging.exception('Error creating backup')
+        return jsonify({'error': str(e)}), 500
 
 
 if __name__ == '__main__':
