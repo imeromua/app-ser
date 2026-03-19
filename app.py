@@ -7,6 +7,7 @@
 from dotenv import load_dotenv
 load_dotenv()
 
+import hmac
 import io
 import logging
 import os
@@ -19,7 +20,9 @@ from openpyxl.styles import Font as XlFont, Alignment as XlAlign, PatternFill, B
 from openpyxl.utils import get_column_letter
 
 from celery.result import AsyncResult
-from flask import Flask, request, render_template, send_file, session, jsonify, Response as FlaskResponse
+from functools import wraps
+
+from flask import Flask, request, render_template, send_file, session, jsonify, Response as FlaskResponse, redirect, url_for
 from werkzeug.utils import secure_filename
 import pandas as pd
 
@@ -39,12 +42,54 @@ app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
 app.secret_key = os.environ.get('SECRET_KEY') or secrets.token_hex(32)
 
 
+def login_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not session.get('logged_in'):
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated
+
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    error = None
+    if request.method == 'POST':
+        expected_login = os.environ.get('APP_LOGIN', '')
+        expected_password = os.environ.get('APP_PASSWORD', '')
+        provided_login = request.form.get('login', '')
+        provided_password = request.form.get('password', '')
+        login_ok = hmac.compare_digest(provided_login, expected_login)
+        password_ok = hmac.compare_digest(provided_password, expected_password)
+        if login_ok and password_ok:
+            session['logged_in'] = True
+            next_url = request.args.get('next', '')
+            if next_url and next_url.startswith('/') and not next_url.startswith('//'):
+                return redirect(next_url)
+            return redirect(url_for('index'))
+        error = 'Невірний логін або пароль'
+    return render_template('login.html', error=error)
+
+
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect(url_for('login'))
+
+
+@app.route('/robots.txt')
+def robots_txt():
+    return app.send_static_file('robots.txt')
+
+
 @app.route('/')
+@login_required
 def index():
     return render_template('index.html', error=None)
 
 
 @app.route('/upload', methods=['POST'])
+@login_required
 def upload():
     files = request.files.getlist('files')
     if not files or all(not f.filename for f in files):
@@ -153,6 +198,7 @@ def upload():
 
 
 @app.route('/download')
+@login_required
 def download():
     sid = session.get('sid')
     data = load_session_data(sid)
@@ -170,6 +216,7 @@ def download():
 
 
 @app.route('/download_inventory')
+@login_required
 def download_inventory():
     """
     Відомість інвентаризації з артикулів ПОТОЧНОГО звіту (з сесії).
@@ -355,6 +402,7 @@ def download_inventory():
 
 
 @app.route('/download_pdf')
+@login_required
 def download_pdf():
     return (
         'Цей маршрут більше не підтримується. '
@@ -366,6 +414,7 @@ def download_pdf():
 # ── Async PDF export via Celery ──────────────────────────────────────────────
 
 @app.route('/export/pdf/start', methods=['POST'])
+@login_required
 def export_pdf_start():
     """Запускає фонову задачу генерації PDF. Повертає {"task_id": "..."}."""
     sid = session.get('sid')
@@ -388,6 +437,7 @@ def export_pdf_start():
 
 
 @app.route('/export/pdf/status/<task_id>')
+@login_required
 def export_pdf_status(task_id):
     """Повертає стан задачі: pending / ready / error."""
     try:
@@ -407,6 +457,7 @@ def export_pdf_status(task_id):
 
 
 @app.route('/export/pdf/result/<task_id>')
+@login_required
 def export_pdf_result(task_id):
     """Повертає готовий PDF-файл, якщо задача завершена."""
     try:
@@ -453,6 +504,7 @@ def export_pdf_result(task_id):
 # ── Dashboard ────────────────────────────────────────────────────────────────
 
 @app.route('/dashboard')
+@login_required
 def dashboard():
     return render_template('dashboard.html')
 
@@ -460,6 +512,7 @@ def dashboard():
 # ── Import to DB ─────────────────────────────────────────────────────────────
 
 @app.route('/import', methods=['POST'])
+@login_required
 def import_to_db():
     """Імпортує XLS-файл до PostgreSQL. Повертає JSON зі статистикою."""
     f = request.files.get('file')
@@ -501,6 +554,7 @@ def import_to_db():
 
 
 @app.route('/imports')
+@login_required
 def list_imports():
     """Повертає список останніх 20 імпортів з таблиці uploads (JSON)."""
     try:
@@ -539,6 +593,7 @@ def list_imports():
 # ── API ───────────────────────────────────────────────────────────────────────
 
 @app.route('/api/db_status')
+@login_required
 def api_db_status():
     """Статистика БД: кількість артикулів, операцій, суми по типах операцій."""
     try:
@@ -629,6 +684,7 @@ def api_db_status():
 
 
 @app.route('/api/categories')
+@login_required
 def api_categories():
     """Повертає список категорій з кількістю артикулів з БД."""
     try:
@@ -658,6 +714,7 @@ def api_categories():
 
 
 @app.route('/api/uploads')
+@login_required
 def api_uploads():
     """Повертає останні 20 імпортів (JSON для дашборду)."""
     return list_imports()
@@ -666,11 +723,13 @@ def api_uploads():
 # ── Reports from DB ───────────────────────────────────────────────────────────
 
 @app.route('/reports_db', methods=['GET'])
+@login_required
 def reports_db():
     return render_template('dashboard.html', active_tab='reports')
 
 
 @app.route('/export_db', methods=['POST'])
+@login_required
 def export_db():
     """Звіт з БД → XLSX файл."""
     from reports import get_summary_report
@@ -719,6 +778,7 @@ def export_db():
 # ── Inventory from DB ─────────────────────────────────────────────────────────
 
 @app.route('/download_inventory_db')
+@login_required
 def download_inventory_db():
     """Відомість інвентаризації з БД по категорії."""
     from reports import get_inventory_template
@@ -853,6 +913,7 @@ def download_inventory_db():
 # ── Utilities ─────────────────────────────────────────────────────────────────
 
 @app.route('/db/clear', methods=['POST'])
+@login_required
 def db_clear():
     """Очищає всі таблиці БД. Вимагає підтверджувальний токен."""
     token = request.json.get('confirm_token') if request.is_json else request.form.get('confirm_token')
@@ -870,6 +931,7 @@ def db_clear():
 
 
 @app.route('/backup')
+@login_required
 def backup():
     """Скачує CSV-дамп таблиці operations."""
     try:
