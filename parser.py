@@ -72,7 +72,6 @@ def _extract_doc_type_code(text: str) -> tuple:
     Формат: TYPE/CODE - DATE  (пробіл перед дефісом відокремлює код від дати)
     Повертає tuple[str, str].
     """
-    # Код не містить пробілів — беремо все між '/' і першим пробілом або кінцем рядка
     m = re.match(r'^(.{3})/(\S+)', text.strip())
     if m:
         return m.group(1), m.group(2)
@@ -84,38 +83,27 @@ def classify_subdoc(subdoc_text: str) -> tuple:
     Визначає тип піддокумента.
     Повертає (subdoc_type, subdoc_code, direction).
     direction: 'до_нас' / 'від_нас' / None
-
-    Всі коди мають формат PREFIX-DIGITS (наприклад, X016-0000467, FDL-29329406).
-    Використовуємо `\\w+-\\d+` для точного вилучення коду без зупинки на
-    внутрішньому дефісі.
     """
-    # Ппт/X016-... або Ппт/Х016-... → переміщення ВІД нас
-    # Перевіряємо обидва варіанти X: ASCII Latin (0x58) та Cyrillic (U+0425)
     if re.search(r'Ппт/[X\u0425]016', subdoc_text):
         code = re.search(r'Ппт/([X\u0425]\w*-\d+)', subdoc_text)
         return 'Ппт', code.group(1) if code else '', 'від_нас'
 
-    # Ппт/FDL-... або Ппт/DP-... → переміщення ДО нас
     if re.search(r'Ппт/(FDL|DP)', subdoc_text):
         code = re.search(r'Ппт/(\w+-\d+)', subdoc_text)
         return 'Ппт', code.group(1) if code else '', 'до_нас'
 
-    # СпО/... → документ списання
     if 'СпО' in subdoc_text:
         code = re.search(r'СпО/(\w+-\d+)', subdoc_text)
         return 'СпО', code.group(1) if code else '', None
 
-    # Апк/... → акт пересорту/недовозу
     if 'Апк' in subdoc_text:
         code = re.search(r'Апк/(\w+-\d+)', subdoc_text)
         return 'Апк', code.group(1) if code else '', None
 
-    # ВИн/... → відомість інвентаризації
     if 'ВИн' in subdoc_text:
         code = re.search(r'ВИн/(\w+-\d+)', subdoc_text)
         return 'ВИн', code.group(1) if code else '', None
 
-    # Зпт/... → запит на переміщення (ігноруємо, не впливає на qty)
     if 'Зпт' in subdoc_text:
         return 'Зпт', '', None
 
@@ -138,10 +126,22 @@ def get_qty(row, doc_type: str) -> tuple:
             return 0.0
 
     if doc_type == 'Кнк':
-        return -safe_float(7), 'H'   # негативний: продаж зменшує залишок
+        return -safe_float(7), 'H'
     if doc_type == 'Апс':
         return safe_float(8), 'I'
     return safe_float(6), 'G'
+
+
+def _is_op_marker(marker) -> bool:
+    """
+    Повертає True якщо маркер вказує на рядок операції.
+    EPI використовує '-' для звичайних операцій,
+    '- ч' (або будь-який рядок що починається з '-') для Апс-корегувань.
+    """
+    if marker is None:
+        return False
+    s = str(marker).strip()
+    return s == '-' or s.startswith('-')
 
 
 def parse_xls(buf) -> dict:
@@ -156,7 +156,6 @@ def parse_xls(buf) -> dict:
                         'subdoc_code', 'direction', 'op_date', 'qty', 'col_source'}]
     }
     """
-    # ── MIME-type validation ──────────────────────────────────────────────
     buf.seek(0)
     header_bytes = buf.read(4)
     if not any(header_bytes.startswith(sig) for sig in ALLOWED_MIME_HEADERS):
@@ -178,7 +177,6 @@ def parse_xls(buf) -> dict:
         except Exception:
             return None
 
-    # ── Шапка звіту ──────────────────────────────────────────────────────
     title      = cell(0, 0)
     shop       = cell(1, 3)
     period_str = cell(1, 10)
@@ -195,12 +193,10 @@ def parse_xls(buf) -> dict:
         'period_to':   period_to,
     }
 
-    # ── Основний цикл ────────────────────────────────────────────────────
     articles: list = []
     operations: list = []
     cur_article = None
     pending_op = None
-    # Поточний накопичений залишок для кожного артикула (для обчислення Апс-дельти)
     running_balances: dict = {}
 
     for i in range(len(df)):
@@ -208,34 +204,32 @@ def parse_xls(buf) -> dict:
         marker = row.iloc[0] if len(row) > 0 else None
         col_b  = str(row.iloc[1]).strip() if len(row) > 1 and pd.notna(row.iloc[1]) else ''
 
-        # Пропускаємо порожні рядки
-        if not col_b and marker not in ('+', '-'):
+        if not col_b and not _is_op_marker(marker):
             continue
 
-        # ── Рядок артикула (будь-який маркер, 8-значний код у col B) ─────────
+        # ── Рядок артикула ──────────────────────────────────────────────────────────
         if is_article_code(col_b):
             col_c = str(row.iloc[2]).strip() if len(row) > 2 and pd.notna(row.iloc[2]) else ''
             cur_article = {
                 'article_id':  col_b,
                 'name':        col_c,
-                'price':       safe_float_at(row, 11),  # col L
-                'total_in':    safe_float_at(row, 6),   # col G
-                'total_out':   safe_float_at(row, 7),   # col H
-                'balance_end': safe_float_at(row, 9),   # col J
+                'price':       safe_float_at(row, 11),
+                'total_in':    safe_float_at(row, 6),
+                'total_out':   safe_float_at(row, 7),
+                'balance_end': safe_float_at(row, 9),
             }
             articles.append(cur_article)
             pending_op = None
             continue
 
-        # ── Рядки операцій (-) ────────────────────────────────────────────
-        if marker != '-' or cur_article is None:
+        # ── Рядки операцій ('-' або '- ч' тощо) ────────────────────────────────
+        if not _is_op_marker(marker) or cur_article is None:
             continue
 
         if not col_b:
             continue
 
         if _has_date(col_b):
-            # Основний документ — містить дату DD.MM.YY
             pending_op = None
             doc_type, doc_code = _extract_doc_type_code(col_b)
             op_date = _extract_date(col_b)
@@ -243,11 +237,8 @@ def parse_xls(buf) -> dict:
             article_id = cur_article['article_id']
 
             if doc_type == 'Апс':
-                # qty зараз містить «сирий» абсолютний залишок (col I);
-                # конвертуємо в дельту: нова_база − поточний_залишок
                 current_balance = running_balances.get(article_id, 0.0)
                 qty = round(qty - current_balance, 3)
-                # Оновлюємо до нового абсолютного балансу (= raw I value)
                 running_balances[article_id] = current_balance + qty
                 if qty == 0:
                     continue
@@ -273,7 +264,6 @@ def parse_xls(buf) -> dict:
             pending_op = op
 
         elif _is_subdoc(col_b):
-            # Піддокумент — немає дати, але є '/'
             subdoc_type, subdoc_code, direction = classify_subdoc(col_b)
             if pending_op is not None:
                 pending_op['subdoc_type'] = subdoc_type
@@ -288,7 +278,7 @@ def parse_xls(buf) -> dict:
     }
 
 
-# ── Допоміжна функція для зворотної сумісності з app.py ──────────────────────
+# ── Допоміжня функція для зворотної сумісності з app.py ─────────────────────────────
 
 def op_display_name(doc_type: str, subdoc_type, direction) -> str:
     """
