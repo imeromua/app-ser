@@ -155,6 +155,68 @@ def get_balance_discrepancies() -> list[dict]:
             return [dict(row) for row in cur.fetchall()]
 
 
+def get_detail_report(date_from, date_to) -> list[dict]:
+    """Детальний звіт: по артикулу + місяць за період."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    a.article_id,
+                    a.name,
+                    a.price,
+                    TO_CHAR(DATE_TRUNC('month', o.op_date), 'YYYY-MM') AS month,
+                    SUM(CASE WHEN o.doc_type = 'ПрВ' THEN o.qty ELSE 0 END)       AS total_in,
+                    SUM(CASE WHEN o.doc_type = 'Кнк' THEN ABS(o.qty) ELSE 0 END)  AS total_sales,
+                    SUM(CASE WHEN o.doc_type = 'СпП' THEN ABS(o.qty) ELSE 0 END)  AS total_writeoff,
+                    SUM(CASE WHEN o.doc_type = 'ПрИ' THEN ABS(o.qty) ELSE 0 END)  AS total_transfer,
+                    SUM(CASE WHEN o.doc_type = 'Апс' THEN o.qty ELSE 0 END)        AS total_inv,
+                    SUM(o.qty)                                                      AS balance,
+                    SUM(o.qty) * a.price                                            AS balance_sum
+                FROM operations o
+                JOIN articles a USING (article_id)
+                WHERE o.op_date BETWEEN %(date_from)s AND %(date_to)s
+                GROUP BY a.article_id, a.name, a.price,
+                         DATE_TRUNC('month', o.op_date)
+                ORDER BY a.name, DATE_TRUNC('month', o.op_date)
+                """,
+                {'date_from': date_from, 'date_to': date_to},
+            )
+            return [dict(row) for row in cur.fetchall()]
+
+
+def get_document_report(date_from, date_to) -> list[dict]:
+    """Звіт по документах: кожна операція окремим рядком."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    a.article_id,
+                    a.name,
+                    o.op_date,
+                    o.doc_type,
+                    o.doc_code,
+                    o.subdoc_type,
+                    o.subdoc_code,
+                    o.direction,
+                    o.qty,
+                    CASE WHEN o.qty > 0 THEN o.qty ELSE 0 END  AS income,
+                    CASE WHEN o.qty < 0 THEN ABS(o.qty) ELSE 0 END AS expense,
+                    SUM(o.qty) OVER (
+                        PARTITION BY a.article_id
+                        ORDER BY o.op_date, o.id
+                    ) AS balance
+                FROM operations o
+                JOIN articles a USING (article_id)
+                WHERE o.op_date BETWEEN %(date_from)s AND %(date_to)s
+                ORDER BY a.name, o.op_date, o.doc_type, o.doc_code
+                """,
+                {'date_from': date_from, 'date_to': date_to},
+            )
+            return [dict(row) for row in cur.fetchall()]
+
+
 def get_inventory_template() -> list[dict]:
     """
     Поточний залишок по всіх артикулах для відомості інвентаризації.
