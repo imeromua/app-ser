@@ -90,10 +90,18 @@ def _agg_cols(df_slice):
     return {k: round(float(v), _QTY_PRECISION) for k, v in totals.items()}
 
 
-def build_rows(ops_df, prices):
-    """Детальний звіт — розбивка по місяцях для кожного артикулу."""
+def build_rows(ops_df, prices, balance_starts=None):
+    """Детальний звіт — розбивка по місяцях для кожного артикулу.
+
+    balance_starts: dict {article_id → float} — залишок на початок періоду
+                    (col E з XLS).  Якщо None або відсутній для артикулу — 0.
+    Залишок у рядку РАЗОМ = balance_start + SUM(qty за період) = кінцевий залишок.
+    Залишок у місячних рядках = нетто-зміна за місяць (без balance_start).
+    """
     if ops_df.empty:
         return [], {'ПрВ': 0, 'Кнк': 0, 'ПрИ': 0, 'СпП': 0, 'Апс': 0, 'Залишок': 0, 'Сума': 0.0}
+
+    _bs = balance_starts or {}
 
     articles = ops_df.groupby('Артикул')['Назва'].first().reset_index()
     months   = sorted(ops_df['Рік-Місяць'].dropna().unique())
@@ -104,6 +112,7 @@ def build_rows(ops_df, prices):
         art, name = ar['Артикул'], ar['Назва']
         df_a = ops_df[ops_df['Артикул'] == art]
         is_w = _is_weighted(df_a['Кількість'])
+        bs   = float(_bs.get(art, 0.0))
         mrows = []
 
         for month in months:
@@ -123,7 +132,8 @@ def build_rows(ops_df, prices):
         rows.extend(mrows)
 
         tcols = _agg_cols(df_a)
-        tz    = round(float(df_a['Кількість'].sum()), 4)
+        # Кінцевий залишок = початковий залишок + нетто-рух за період
+        tz    = round(bs + float(df_a['Кількість'].sum()), 4)
         price = prices.get(art)
         ts    = round(tz * price, 2) if price else None
 
@@ -143,10 +153,16 @@ def build_rows(ops_df, prices):
     return rows, grand
 
 
-def build_summary_rows(ops_df, prices):
-    """Сумарний звіт — один рядок на артикул, без місяцної розбивки."""
+def build_summary_rows(ops_df, prices, balance_starts=None):
+    """Сумарний звіт — один рядок на артикул, без місяцної розбивки.
+
+    balance_starts: dict {article_id → float} — залишок на початок періоду.
+    Залишок = balance_start + SUM(qty за період) = кінцевий залишок.
+    """
     if ops_df.empty:
         return [], {'ПрВ': 0, 'Кнк': 0, 'ПрИ': 0, 'СпП': 0, 'Апс': 0, 'Залишок': 0, 'Сума': 0.0}
+
+    _bs = balance_starts or {}
 
     articles = ops_df.groupby('Артикул')['Назва'].first().reset_index()
     rows  = []
@@ -156,10 +172,12 @@ def build_summary_rows(ops_df, prices):
         art, name = ar['Артикул'], ar['Назва']
         df_a  = ops_df[ops_df['Артикул'] == art]
         is_w  = _is_weighted(df_a['Кількість'])
+        bs    = float(_bs.get(art, 0.0))
         cols  = _agg_cols(df_a)
         if all(v == 0 for v in cols.values()):
             continue
-        zal   = round(float(df_a['Кількість'].sum()), 4)
+        # Кінцевий залишок = початковий залишок + нетто-рух за період
+        zal   = round(bs + float(df_a['Кількість'].sum()), 4)
         price = prices.get(art)
         suma  = round(zal * price, 2) if price else None
 
@@ -178,10 +196,15 @@ def build_summary_rows(ops_df, prices):
     return rows, grand
 
 
-def build_document_rows(ops_df, prices):
+def build_document_rows(ops_df, prices, balance_starts=None):
     """
     Звіт «По документах» — хронологічний список операцій на кожен артикул
     з накопичувальним залишком (Running Total).
+
+    balance_starts: dict {article_id → float} — залишок на початок періоду
+                    (col E з XLS).  Накопичувальний залишок стартує з цього
+                    значення, тому перший рядок показує вже коректний залишок
+                    навіть якщо початковий залишок ненульовий.
 
     Прихід/Розхід визначається по назві операції, а НЕ по знаку qty:
       ПрВ, Ппт(Прихід)               → в колонку Прихід
@@ -195,6 +218,8 @@ def build_document_rows(ops_df, prices):
     if ops_df.empty:
         return [], {'Прихід': 0, 'Розхід': 0, 'Залишок': 0}
 
+    _bs = balance_starts or {}
+
     articles = ops_df.groupby('Артикул')['Назва'].first().reset_index()
     rows  = []
     grand = {'Прихід': 0.0, 'Розхід': 0.0, 'Залишок': 0}
@@ -205,7 +230,8 @@ def build_document_rows(ops_df, prices):
         df_a = df_a.sort_values('Дата', na_position='last').reset_index(drop=True)
         is_w = _is_weighted(df_a['Кількість'])
 
-        running_balance = 0.0
+        # Накопичувальний залишок стартує з початкового залишку артикулу
+        running_balance = float(_bs.get(art, 0.0))
         art_pryhid  = 0.0
         art_rozkhid = 0.0
 

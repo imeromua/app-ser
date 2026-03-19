@@ -49,7 +49,7 @@ def upload():
         return render_template('index.html', error='Файл не знайдено')
     try:
         report_type = request.form.get('report_type', 'detail')
-        all_ops, all_prices = [], {}
+        all_ops, all_prices, all_balance_starts = [], {}, {}
         first_header = None
 
         for f in files:
@@ -66,6 +66,13 @@ def upload():
                 for a in result['articles']
                 if a.get('price')
             })
+
+            # Залишок на початок: перший файл має пріоритет (хронологічний порядок)
+            for a in result['articles']:
+                art_id = a['article_id']
+                if art_id not in all_balance_starts:
+                    bs = a.get('balance_start')
+                    all_balance_starts[art_id] = float(bs) if bs is not None else 0.0
 
             articles_map = {a['article_id']: a for a in result['articles']}
             records = []
@@ -102,11 +109,11 @@ def upload():
         header = first_header or {}
 
         if report_type == 'summary':
-            rows, grand = build_summary_rows(combined_df, all_prices)
+            rows, grand = build_summary_rows(combined_df, all_prices, all_balance_starts)
         elif report_type == 'document':
-            rows, grand = build_document_rows(combined_df, all_prices)
+            rows, grand = build_document_rows(combined_df, all_prices, all_balance_starts)
         else:
-            rows, grand = build_rows(combined_df, all_prices)
+            rows, grand = build_rows(combined_df, all_prices, all_balance_starts)
 
         if report_type == 'document':
             all_names = [r['Назва'] for r in rows if r.get('type') == 'doc_data']
