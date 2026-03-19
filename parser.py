@@ -113,8 +113,7 @@ def get_qty(row, doc_type: str) -> tuple:
     Повертає (qty, col_source) де col_source = 'G' / 'H' / 'I'.
     ПрВ/СпП/ПрИ → col G (index 6); знак береться з файлу
     Кнк          → col H (index 7), інвертується
-    Апс          → col I (index 8), абсолютний залишок після коригування;
-                   дельта обчислюється в parse_xls()
+    Апс          → col I (index 8), знакова дельта (вже готове значення)
     """
     def safe_float(idx):
         try:
@@ -208,9 +207,6 @@ def parse_xls(buf) -> dict:
     operations: list = []
     cur_article = None
     pending_op = None
-    # running_balances: article_id → поточний накопичений залишок
-    # Ініціалізується з balance_start артикула (col E), щоби
-    # Апс-дельта рахувалась правильно з урахуванням початкового залишку.
     running_balances: dict = {}
 
     for i in range(len(df)):
@@ -235,7 +231,6 @@ def parse_xls(buf) -> dict:
                 'balance_end':   safe_float_at(row, 9),
             }
             articles.append(cur_article)
-            # Ініціалізуємо running_balance з balance_start, а не з 0
             running_balances[col_b] = balance_start
             pending_op = None
             continue
@@ -254,22 +249,14 @@ def parse_xls(buf) -> dict:
             qty, col_src = get_qty(row, doc_type)
             article_id = cur_article['article_id']
 
-            if doc_type == 'Апс':
-                # qty — абсолютний залишок після коригування (col I)
-                # дельта = новий_абсолютний − поточний_залишок
-                # running_balance вже ініціалізовано з balance_start
-                current_balance = running_balances.get(article_id, 0.0)
-                aps_absolute = qty          # зберігаємо для ясності
-                qty = round(aps_absolute - current_balance, 3)
-                running_balances[article_id] = aps_absolute  # записуємо абсолютне значення
-                if qty == 0:
-                    continue
-            else:
-                if qty == 0:
-                    continue
-                running_balances[article_id] = round(
-                    running_balances.get(article_id, 0.0) + qty, 3
-                )
+            if qty == 0:
+                continue
+
+            # Апс: col I містить знакову дельту (не абсолютний залишок).
+            # Оновлюємо running_balance додаванням, як і для будь-якої іншої операції.
+            running_balances[article_id] = round(
+                running_balances.get(article_id, 0.0) + qty, 3
+            )
 
             op = {
                 'article_id':  article_id,
