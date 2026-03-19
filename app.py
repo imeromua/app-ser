@@ -66,7 +66,7 @@ def login():
             next_url = request.args.get('next', '')
             if next_url and next_url.startswith('/') and not next_url.startswith('//'):
                 return redirect(next_url)
-            return redirect(url_for('index'))
+            return redirect(url_for('dashboard'))
         error = 'Невірний логін або пароль'
     return render_template('login.html', error=error)
 
