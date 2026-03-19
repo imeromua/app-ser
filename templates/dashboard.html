@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>📦 Рух товарів — Дашборд</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
+</head>
+<body>
+
+<!-- ── Desktop header ──────────────────────────────────────────────────── -->
+<header class="dash-header">
+  <a href="/" class="dash-logo">📦 Рух <span>товарів</span></a>
+  <nav class="dash-tabs">
+    <button class="dash-tab-btn" data-tab="import">
+      <i class="bi bi-cloud-upload"></i> Імпорт
+    </button>
+    <button class="dash-tab-btn" data-tab="reports">
+      <i class="bi bi-bar-chart-line"></i> Звіти
+    </button>
+    <button class="dash-tab-btn" data-tab="inventory">
+      <i class="bi bi-clipboard-check"></i> Відомості
+    </button>
+    <button class="dash-tab-btn" data-tab="dbstatus">
+      <i class="bi bi-database"></i> Стан БД
+    </button>
+  </nav>
+  <a href="/" class="btn btn-ghost" style="font-size:.8rem;padding:5px 12px;text-decoration:none">
+    <i class="bi bi-arrow-left"></i> Старий інтерфейс
+  </a>
+</header>
+
+<!-- ── Main content ────────────────────────────────────────────────────── -->
+<main class="dash-content">
+
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <!-- TAB 1: IMPORT                                                       -->
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <div id="tab-import" class="tab-pane">
+
+    <!-- Drop zone card -->
+    <div class="dash-card">
+      <div class="dash-card-title"><i class="bi bi-cloud-upload" style="color:var(--accent-green)"></i> Імпорт файлу до бази даних</div>
+
+      <div id="drop-zone" class="drop-zone">
+        <i class="bi bi-file-earmark-spreadsheet"></i>
+        <p class="drop-main">Перетягніть XLS-файл сюди</p>
+        <p>або натисніть для вибору</p>
+      </div>
+      <input type="file" id="file-input" accept=".xls,.xlsx" class="d-none">
+
+      <div id="file-preview" class="file-preview">
+        <i class="bi bi-file-earmark-excel"></i>
+        <div>
+          <div class="file-preview-name"></div>
+          <div class="file-preview-size"></div>
+        </div>
+      </div>
+
+      <div id="import-spinner" class="spinner-wrap mt-3">
+        <div class="spinner-border spinner-border-sm text-success" role="status"></div>
+        <span>Імпортуємо до бази даних...</span>
+      </div>
+
+      <button id="import-btn" class="btn btn-green btn-lg btn-w100 mt-3" disabled>
+        <i class="bi bi-cloud-upload"></i> Імпортувати до БД
+      </button>
+
+      <!-- Result card -->
+      <div id="import-result" class="result-card">
+        <div class="result-title"></div>
+        <div class="result-body"></div>
+      </div>
+
+      <!-- Snapshot warning -->
+      <div id="import-warn" class="result-card warning" style="margin-top:10px">
+        <div class="result-title">⚠️ Розбіжності залишків</div>
+        <div>Артикули з відхиленням: <span class="warn-list"></span></div>
+      </div>
+    </div>
+
+    <!-- Recent imports table -->
+    <div class="dash-card">
+      <div class="dash-card-title"><i class="bi bi-clock-history" style="color:var(--accent-blue)"></i> Останні імпорти</div>
+      <div style="overflow-x:auto">
+        <table class="dash-table" id="imports-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Файл</th>
+              <th>Магазин</th>
+              <th>Період</th>
+              <th>Операцій</th>
+              <th>Дата імпорту</th>
+              <th>Стратегія</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td colspan="7" class="text-center py-3"><span style="color:var(--text-muted)">Завантаження...</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <div class="dash-card">
+      <div class="dash-card-title"><i class="bi bi-tools" style="color:var(--text-muted)"></i> Управління базою даних</div>
+      <div style="display:flex;gap:12px;flex-wrap:wrap">
+        <button class="btn btn-danger-outline" onclick="openClearModal()">
+          <i class="bi bi-trash3"></i> Очистити БД
+        </button>
+        <a href="/backup" class="btn btn-ghost" style="text-decoration:none">
+          <i class="bi bi-download"></i> Бекап (CSV)
+        </a>
+      </div>
+    </div>
+
+  </div><!-- /tab-import -->
+
+
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <!-- TAB 2: REPORTS                                                      -->
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <div id="tab-reports" class="tab-pane">
+
+    <!-- Report type -->
+    <div class="dash-card">
+      <div class="dash-card-title"><i class="bi bi-bar-chart-line" style="color:var(--accent-blue)"></i> Тип звіту</div>
+      <div class="report-type-grid">
+        <div class="report-type-card active" data-type="summary">
+          <i class="bi bi-graph-up-arrow"></i>
+          <div class="card-title">Сумарний</div>
+          <div class="card-desc">Загальний підсумок по артикулах</div>
+        </div>
+        <div class="report-type-card" data-type="detail">
+          <i class="bi bi-table"></i>
+          <div class="card-title">Детальний</div>
+          <div class="card-desc">По місяцях, розбивка по операціях</div>
+        </div>
+        <div class="report-type-card" data-type="document">
+          <i class="bi bi-search"></i>
+          <div class="card-title">По документах</div>
+          <div class="card-desc">Хронологія кожної операції</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="dash-card">
+      <div class="dash-card-title"><i class="bi bi-funnel" style="color:var(--accent-blue)"></i> Параметри звіту</div>
+
+      <!-- Quick date buttons -->
+      <div class="date-quick">
+        <button data-range="today">Сьогодні</button>
+        <button data-range="week">Цей тиждень</button>
+        <button data-range="month">Цей місяць</button>
+        <button data-range="year">Цей рік</button>
+        <button data-range="all">Весь час</button>
+      </div>
+
+      <!-- Filter row -->
+      <div class="filter-row">
+        <div class="field">
+          <label for="report-date-from">Від</label>
+          <input type="date" id="report-date-from" class="dash-input">
+        </div>
+        <div class="field">
+          <label for="report-date-to">До</label>
+          <input type="date" id="report-date-to" class="dash-input">
+        </div>
+        <div class="field">
+          <label for="report-category">Категорія</label>
+          <select id="report-category" class="dash-input">
+            <option value="">Всі категорії</option>
+          </select>
+        </div>
+        <div class="field" style="flex:0">
+          <label>&nbsp;</label>
+          <button class="btn btn-blue" onclick="exportReport()">
+            <i class="bi bi-file-earmark-arrow-down"></i> Експорт XLSX
+          </button>
+        </div>
+      </div>
+
+      <!-- Hidden export form -->
+      <form id="export-form" action="/export_db" method="post" style="display:none">
+        <input type="hidden" name="date_from">
+        <input type="hidden" name="date_to">
+      </form>
+    </div>
+
+    <!-- Empty state -->
+    <div class="dash-card" style="text-align:center;padding:40px">
+      <i class="bi bi-bar-chart" style="font-size:3rem;color:var(--text-muted);display:block;margin-bottom:12px"></i>
+      <p style="color:var(--text-muted)">Оберіть параметри та натисніть «Експорт» для отримання звіту</p>
+    </div>
+
+  </div><!-- /tab-reports -->
+
+
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <!-- TAB 3: INVENTORY                                                    -->
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <div id="tab-inventory" class="tab-pane">
+
+    <div class="dash-card">
+      <div class="dash-card-title"><i class="bi bi-clipboard-check" style="color:var(--accent-amber)"></i> Відомості інвентаризації по категоріях</div>
+      <p style="color:var(--text-muted);font-size:.9rem;margin-bottom:16px">
+        Оберіть категорію та завантажте відомість інвентаризації з поточними залишками з БД
+      </p>
+      <div id="category-grid" class="category-grid">
+        <!-- Filled by JS -->
+      </div>
+    </div>
+
+    <!-- All categories button -->
+    <div class="dash-card" style="text-align:center">
+      <p style="color:var(--text-muted);margin-bottom:12px">Або завантажте відомість по всіх категоріях одразу:</p>
+      <a href="/download_inventory_db" class="btn btn-amber" style="text-decoration:none">
+        <i class="bi bi-file-earmark-arrow-down"></i> Повна відомість (всі артикули)
+      </a>
+    </div>
+
+  </div><!-- /tab-inventory -->
+
+
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <!-- TAB 4: DB STATUS                                                    -->
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <div id="tab-dbstatus" class="tab-pane">
+
+    <!-- KPI cards -->
+    <div class="kpi-grid">
+      <div class="kpi-card green">
+        <i class="bi bi-box-seam"></i>
+        <div class="kpi-value" id="kpi-articles"><div class="skeleton skeleton-kpi"></div></div>
+        <div class="kpi-label">Артикулів</div>
+      </div>
+      <div class="kpi-card blue">
+        <i class="bi bi-lightning-charge"></i>
+        <div class="kpi-value" id="kpi-ops"><div class="skeleton skeleton-kpi"></div></div>
+        <div class="kpi-label">Операцій</div>
+      </div>
+      <div class="kpi-card amber">
+        <i class="bi bi-calendar3"></i>
+        <div class="kpi-value" id="kpi-days"><div class="skeleton skeleton-kpi"></div></div>
+        <div class="kpi-label">Днів в базі</div>
+      </div>
+      <div class="kpi-card cyan">
+        <i class="bi bi-currency-dollar"></i>
+        <div class="kpi-value" id="kpi-sum"><div class="skeleton skeleton-kpi"></div></div>
+        <div class="kpi-label">Сума залишків, грн</div>
+      </div>
+    </div>
+
+    <!-- Op type breakdown -->
+    <div class="dash-card">
+      <div class="dash-card-title"><i class="bi bi-pie-chart" style="color:var(--accent-cyan)"></i> Розбивка по типах операцій</div>
+      <div id="op-badges" class="op-badges">
+        <!-- Filled by JS -->
+        <div class="skeleton" style="height:32px;width:160px;border-radius:6px"></div>
+        <div class="skeleton" style="height:32px;width:160px;border-radius:6px"></div>
+        <div class="skeleton" style="height:32px;width:160px;border-radius:6px"></div>
+      </div>
+    </div>
+
+    <!-- Top articles -->
+    <div class="dash-card">
+      <div class="dash-card-title"><i class="bi bi-trophy" style="color:var(--accent-amber)"></i> Топ-10 артикулів за сумою залишку</div>
+      <div style="overflow-x:auto">
+        <table class="dash-table" id="top-articles-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Артикул</th>
+              <th>Назва</th>
+              <th>Залишок</th>
+              <th>Ціна</th>
+              <th>Сума, грн</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td colspan="6" class="text-center py-3"><span style="color:var(--text-muted)">Завантаження...</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Tech info -->
+    <div class="dash-card">
+      <div class="dash-card-title"><i class="bi bi-info-circle" style="color:var(--text-muted)"></i> Технічна інформація</div>
+      <div style="display:flex;flex-wrap:wrap;gap:16px;font-size:.875rem">
+        <div>🗓️ Перший запис: <strong id="db-date-min">—</strong></div>
+        <div>🗓️ Останній запис: <strong id="db-date-max">—</strong></div>
+        <div>📥 Останній імпорт: <strong id="db-last-import">—</strong></div>
+      </div>
+    </div>
+
+  </div><!-- /tab-dbstatus -->
+
+</main><!-- /dash-content -->
+
+
+<!-- ── Mobile bottom nav ────────────────────────────────────────────────── -->
+<nav class="bottom-nav">
+  <div class="bottom-nav-items">
+    <button class="bottom-nav-item" data-tab="import">
+      <i class="bi bi-cloud-upload"></i>
+      <span>Імпорт</span>
+    </button>
+    <button class="bottom-nav-item" data-tab="reports">
+      <i class="bi bi-bar-chart-line"></i>
+      <span>Звіти</span>
+    </button>
+    <button class="bottom-nav-item" data-tab="inventory">
+      <i class="bi bi-clipboard-check"></i>
+      <span>Відом.</span>
+    </button>
+    <button class="bottom-nav-item" data-tab="dbstatus">
+      <i class="bi bi-database"></i>
+      <span>Стан</span>
+    </button>
+  </div>
+</nav>
+
+<!-- ── Clear DB modal ───────────────────────────────────────────────────── -->
+<div id="clear-modal" class="modal-overlay" onclick="if(event.target===this)closeClearModal()">
+  <div class="modal-box">
+    <div class="modal-title">🗑️ Очистити базу даних?</div>
+    <div class="modal-text">
+      Ви впевнені? <strong>Всі дані буде видалено безповоротно</strong> —
+      операції, артикули, знімки залишків та журнал імпортів.
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeClearModal()">Скасувати</button>
+      <button class="btn" style="background:#e74c3c;color:#fff" onclick="confirmClear()">
+        <i class="bi bi-trash3"></i> Так, очистити
+      </button>
+    </div>
+  </div>
+</div>
+
+<script src="{{ url_for('static', filename='dashboard.js') }}"></script>
+</body>
+</html>
