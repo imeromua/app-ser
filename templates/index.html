@@ -2,6 +2,7 @@
 <html lang="uk">
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex, nofollow, noarchive, nosnippet">
   <title>Рух товарів — аналіз</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
   <style>
@@ -19,6 +20,9 @@
     .info-card h6{color:#1F3864;font-weight:700;font-size:1rem}
     .feature-item{display:flex;align-items:flex-start;gap:8px;margin-bottom:6px;font-size:.9rem;color:#333}
     .feature-item .emoji{flex-shrink:0;font-size:1rem}
+    .app-footer{background:#1a1d27;border-top:1px solid #2d3148;color:#7a7f9a;font-size:0.78rem;text-align:center;padding:12px 16px;margin-top:auto}
+    .app-footer a{color:#4f8ef7;text-decoration:none}
+    .app-footer a:hover{text-decoration:underline}
   </style>
 </head>
 <body>
@@ -91,5 +95,14 @@ fi.addEventListener('change',()=>{if(fi.files.length){fn.textContent='\u2713 '+A
 drop.addEventListener('drop',ev=>{const files=ev.dataTransfer.files;if(files.length){const dt=new DataTransfer();
   Array.from(files).forEach(f=>dt.items.add(f));fi.files=dt.files;fn.textContent='\u2713 '+Array.from(files).map(f=>f.name).join(', ');btn.disabled=false;}});
 form.addEventListener('submit',()=>{spin.classList.remove('d-none');btn.disabled=true;});
+</script>
+<footer class="app-footer">
+  © <span class="footer-year"></span> Yuzko Oleksandr ·
+  <a href="mailto:yuzko.s@gmail.com">yuzko.s@gmail.com</a> ·
+  <a href="https://github.com/imeromua" target="_blank" rel="noopener">github.com/imeromua</a><br>
+  Захищено авторським правом. Всі права захищено.
+</footer>
+<script>
+document.querySelectorAll('.footer-year').forEach(function(el){el.textContent=new Date().getFullYear();});
 </script>
 </body></html>
