@@ -761,6 +761,21 @@ def export_db():
                 'Ціна':     float(r['price']          or 0),
                 'Сума':     float(r['balance_sum']    or 0),
             })
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT shop, warehouse
+                    FROM uploads
+                    WHERE period_from <= %(date_to)s AND period_to >= %(date_from)s
+                    ORDER BY uploaded_at DESC
+                    LIMIT 1
+                    """,
+                    {'date_from': date_from, 'date_to': date_to}
+                )
+                upload_row = cur.fetchone()
+        shop      = upload_row['shop']      if upload_row else ''
+        warehouse = upload_row['warehouse'] if upload_row else ''
         grand = {
             'ПрВ':     sum(r['ПрВ']     for r in rows),
             'Кнк':     sum(r['Кнк']     for r in rows),
@@ -771,13 +786,16 @@ def export_db():
             'Сума':    sum(r['Сума']    for r in rows),
         }
         header = {
-            'title':     'Рух товарів — зведений звіт',
-            'shop':      '',
-            'warehouse': '',
+            'title':     'Рух товарів',
+            'shop':      shop,
+            'warehouse': warehouse,
             'period':    f'{date_from} — {date_to}',
         }
         buf = export_excel(header, rows, grand, report_type='summary')
-        filename = f'звіт_{date_from}_{date_to}.xlsx'
+        all_names = [r['Назва'] for r in rows]
+        category = detect_category(all_names)
+        safe_category = category.replace('/', '-').replace(' ', '_')
+        filename = f'{safe_category}_сумарний_звіт.xlsx'
         return send_file(buf, as_attachment=True, download_name=filename,
                          mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
     except Exception as e:
