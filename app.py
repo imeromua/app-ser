@@ -732,35 +732,95 @@ def reports_db():
 @login_required
 def export_db():
     """Звіт з БД → XLSX файл."""
-    from reports import get_summary_report
+    from reports import get_summary_report, get_detail_report, get_document_report
     if request.is_json:
         body = request.get_json(silent=True) or {}
-        date_from = body.get('date_from') or request.form.get('date_from')
-        date_to   = body.get('date_to')   or request.form.get('date_to')
+        date_from   = body.get('date_from') or request.form.get('date_from')
+        date_to     = body.get('date_to')   or request.form.get('date_to')
+        report_type = body.get('report_type', 'summary')
     else:
-        date_from = request.form.get('date_from')
-        date_to   = request.form.get('date_to')
+        date_from   = request.form.get('date_from')
+        date_to     = request.form.get('date_to')
+        report_type = request.form.get('report_type', 'summary')
 
     if not date_from or not date_to:
         return jsonify({'error': 'Потрібно вказати date_from та date_to'}), 400
 
     try:
-        db_rows = get_summary_report(date_from, date_to)
-        rows = []
-        for r in db_rows:
-            rows.append({
-                'type':     'summary',
-                'Артикул':  r['article_id'],
-                'Назва':    r['name'],
-                'ПрВ':      float(r['total_in']       or 0),
-                'Кнк':      float(r['total_sales']    or 0),
-                'ПрИ':      float(r['total_transfer'] or 0),
-                'СпП':      float(r['total_writeoff'] or 0),
-                'Апс':      float(r['total_inv']      or 0),
-                'Залишок':  float(r['balance']        or 0),
-                'Ціна':     float(r['price']          or 0),
-                'Сума':     float(r['balance_sum']    or 0),
-            })
+        if report_type == 'detail':
+            db_rows = get_detail_report(date_from, date_to)
+            rows = []
+            for r in db_rows:
+                rows.append({
+                    'type':     'data',
+                    'Артикул':  r['article_id'],
+                    'Назва':    r['name'],
+                    'Місяць':   r['month'],
+                    'ПрВ':      float(r['total_in']       or 0),
+                    'Кнк':      float(r['total_sales']    or 0),
+                    'ПрИ':      float(r['total_transfer'] or 0),
+                    'СпП':      float(r['total_writeoff'] or 0),
+                    'Апс':      float(r['total_inv']      or 0),
+                    'Залишок':  float(r['balance']        or 0),
+                    'Ціна':     float(r['price']          or 0),
+                    'Сума':     float(r['balance_sum']    or 0),
+                })
+            grand = {
+                'ПрВ':     sum(r['ПрВ']     for r in rows),
+                'Кнк':     sum(r['Кнк']     for r in rows),
+                'ПрИ':     sum(r['ПрИ']     for r in rows),
+                'СпП':     sum(r['СпП']     for r in rows),
+                'Апс':     sum(r['Апс']     for r in rows),
+                'Залишок': sum(r['Залишок'] for r in rows),
+                'Сума':    sum(r['Сума']    for r in rows),
+            }
+        elif report_type == 'document':
+            db_rows = get_document_report(date_from, date_to)
+            rows = []
+            for r in db_rows:
+                rows.append({
+                    'type':      'doc_data',
+                    'Артикул':   r['article_id'],
+                    'Назва':     r['name'],
+                    'Дата':      str(r['op_date']),
+                    'Операція':  r['doc_type'],
+                    'Документ':  r['doc_type'] + '/' + (r['doc_code'] or ''),
+                    'Прихід':    float(r['income']  or 0),
+                    'Розхід':    float(r['expense'] or 0),
+                    'Кількість': float(r['qty']     or 0),
+                    'Залишок':   float(r['balance'] or 0),
+                })
+            grand = {
+                'Прихід':  sum(r['Прихід']  for r in rows),
+                'Розхід':  sum(r['Розхід']  for r in rows),
+                'Залишок': rows[-1]['Залишок'] if rows else 0,
+            }
+        else:
+            db_rows = get_summary_report(date_from, date_to)
+            rows = []
+            for r in db_rows:
+                rows.append({
+                    'type':     'summary',
+                    'Артикул':  r['article_id'],
+                    'Назва':    r['name'],
+                    'ПрВ':      float(r['total_in']       or 0),
+                    'Кнк':      float(r['total_sales']    or 0),
+                    'ПрИ':      float(r['total_transfer'] or 0),
+                    'СпП':      float(r['total_writeoff'] or 0),
+                    'Апс':      float(r['total_inv']      or 0),
+                    'Залишок':  float(r['balance']        or 0),
+                    'Ціна':     float(r['price']          or 0),
+                    'Сума':     float(r['balance_sum']    or 0),
+                })
+            grand = {
+                'ПрВ':     sum(r['ПрВ']     for r in rows),
+                'Кнк':     sum(r['Кнк']     for r in rows),
+                'ПрИ':     sum(r['ПрИ']     for r in rows),
+                'СпП':     sum(r['СпП']     for r in rows),
+                'Апс':     sum(r['Апс']     for r in rows),
+                'Залишок': sum(r['Залишок'] for r in rows),
+                'Сума':    sum(r['Сума']    for r in rows),
+            }
         with get_conn() as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -776,26 +836,22 @@ def export_db():
                 upload_row = cur.fetchone()
         shop      = upload_row['shop']      if upload_row else ''
         warehouse = upload_row['warehouse'] if upload_row else ''
-        grand = {
-            'ПрВ':     sum(r['ПрВ']     for r in rows),
-            'Кнк':     sum(r['Кнк']     for r in rows),
-            'ПрИ':     sum(r['ПрИ']     for r in rows),
-            'СпП':     sum(r['СпП']     for r in rows),
-            'Апс':     sum(r['Апс']     for r in rows),
-            'Залишок': sum(r['Залишок'] for r in rows),
-            'Сума':    sum(r['Сума']    for r in rows),
-        }
         header = {
             'title':     'Рух товарів',
             'shop':      shop,
             'warehouse': warehouse,
             'period':    f'{date_from} — {date_to}',
         }
-        buf = export_excel(header, rows, grand, report_type='summary')
+        buf = export_excel(header, rows, grand, report_type=report_type)
         all_names = [r['Назва'] for r in rows]
         category = detect_category(all_names)
         safe_category = category.replace('/', '-').replace(' ', '_')
-        filename = f'{safe_category}_сумарний_звіт.xlsx'
+        if report_type == 'summary':
+            filename = f'{safe_category}_сумарний_звіт.xlsx'
+        elif report_type == 'document':
+            filename = f'{safe_category}_по_документах.xlsx'
+        else:
+            filename = f'{safe_category}_детальний_звіт.xlsx'
         return send_file(buf, as_attachment=True, download_name=filename,
                          mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
     except Exception as e:
