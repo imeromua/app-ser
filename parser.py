@@ -113,7 +113,8 @@ def get_qty(row, doc_type: str) -> tuple:
     Повертає (qty, col_source) де col_source = 'G' / 'H' / 'I'.
     ПрВ/СпП/ПрИ → col G (index 6); знак береться з файлу
     Кнк          → col H (index 7), інвертується
-    Апс          → col I (index 8), знакова дельта (вже готове значення)
+    Апс          → col I (index 8), позитивна кількість одиниць до списання;
+                   завжди зменшує залишок — інвертується
     """
     def safe_float(idx):
         try:
@@ -125,7 +126,7 @@ def get_qty(row, doc_type: str) -> tuple:
     if doc_type == 'Кнк':
         return -safe_float(7), 'H'
     if doc_type == 'Апс':
-        return safe_float(8), 'I'
+        return -safe_float(8), 'I'
     return safe_float(6), 'G'
 
 
@@ -252,8 +253,6 @@ def parse_xls(buf) -> dict:
             if qty == 0:
                 continue
 
-            # Апс: col I містить знакову дельту (не абсолютний залишок).
-            # Оновлюємо running_balance додаванням, як і для будь-якої іншої операції.
             running_balances[article_id] = round(
                 running_balances.get(article_id, 0.0) + qty, 3
             )
